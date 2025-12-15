@@ -336,6 +336,7 @@ import json
 # Path hack
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy import text
 from database.connection import engine
 from database.models import Base
 from repositories.prompt import prompt_repository
@@ -393,6 +394,11 @@ RAW_PROMPTS_DATA = [
     "name": "graph_extraction",
     "user": "system",
     "prompt": "Tu es un expert en Knowledge Graph. Ta mission est d'extraire des relations sémantiques précises du texte fourni.\n\nFormat de sortie JSON attendu :\n{\n  \"triplets\": [\n    {\n      \"source\": \"Nom Entité 1\",\n      \"source_type\": \"PERSON | COMPANY | CONCEPT | EVENT | TOOL | LOCATION\",\n      \"relation\": \"VERBE_EN_MAJUSCULE_ET_ANGLAIS\", \n      \"target\": \"Nom Entité 2\",\n      \"target_type\": \"PERSON | COMPANY | CONCEPT | EVENT | TOOL | LOCATION\",\n      \"description\": \"Court contexte (ex: 'Depuis 2020')\"\n    }\n  ]\n}\n\nRègles :\n1. Utilise des relations précises : ACQUIRED, SUED, PARTNERED_WITH, AUTHORED, ATTACKED_BY, CEO_OF, LOCATED_IN. Évite les relations vagues comme \"LINKED_TO\".\n2. Normalise les noms (ex: \"Microsoft Corp\" -> \"Microsoft\").\n3. Si le texte parle d'une attaque informatique, extrais : ATTACKER, VICTIM, METHOD, DATE.\n4. Extrais au maximum 15 triplets les plus pertinents.\n\nREGLE STRICTE: toujours répondre en français"
+  },
+    {
+    "name": "three-pass",
+    "user": "cv@duhamel.xyz",
+    "prompt": "Pass 1: a quick skim of what the paper is about.\nPass 2: the main ideas and why they matter.\nPass 3: the deeper details I should pay attention to.\nJE VEUX TES REPONSES EN FRANÇAIS"
   }
 ]
 
@@ -402,6 +408,15 @@ def seed_prompts():
     # S'assurer que la table existe
     Base.metadata.create_all(bind=engine)
     
+    print("🧹 Nettoyage de la table 'prompts' existante...")
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("DELETE FROM prompts"))
+            connection.commit()
+            print("🗑️ Table vidée avec succès.")
+    except Exception as e:
+        print(f"⚠️ Attention : Impossible de vider la table (elle est peut-être déjà vide ou le nom diffère) : {e}")
+
     count = 0
     for p_data in RAW_PROMPTS_DATA:
         try:

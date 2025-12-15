@@ -36,34 +36,24 @@ class BaseRepository:
 # ------------------------------------------
 import uuid
 import logging
-from typing import List
+from typing import List, Optional
 from schemas.doc import Chunk as ChunkSchema
 from database.connection import get_chroma_client
 
 logger = logging.getLogger(__name__)
 
 class ChunkRepository:
-    """
-    Gère les interactions avec la base vectorielle ChromaDB.
-    Récupère la collection dynamiquement pour éviter les erreurs de "Zombie Connection".
-    """
     def __init__(self):
         self.client = get_chroma_client()
 
     @property
     def collection(self):
-        """
-        PROPRIÉTÉ MAGIQUE :
-        Récupère la collection 'rag_chunks' fraîche à chaque appel.
-        Si la collection a été supprimée par un script de clean, elle est recréée ou retrouvée ici.
-        """
         return self.client.get_or_create_collection(name="rag_chunks")
 
     def add_chunks(self, doc_id: str, employee: str, chunks: List[ChunkSchema]):
         if not chunks:
             return
 
-        # 1. Nettoyage (On utilise self.collection qui est toujours à jour)
         self.delete_chunks_by_doc(doc_id, employee)
 
         ids = []
@@ -75,7 +65,6 @@ class ChunkRepository:
             ids.append(chunk_id)
             documents.append(chunk.content)
             
-            # 2. Aplatissement des métadonnées
             meta = chunk.metadata.copy()
             meta["doc"] = doc_id
             meta["employee"] = employee
@@ -88,10 +77,8 @@ class ChunkRepository:
                     clean_meta[k] = ""
                 else:
                     clean_meta[k] = v
-            
             metadatas.append(clean_meta)
 
-        # 3. Ajout
         try:
             self.collection.add(
                 ids=ids,
@@ -103,12 +90,30 @@ class ChunkRepository:
             logger.error(f"❌ Erreur ajout Chroma : {e}")
             raise e
 
-    def search(self, query: str, employee: str, limit: int = 5):
+    def search(self, query: str, employee: str, limit: int = 5, doc_ids_filter: Optional[List[str]] = None):
         try:
+            # Construction de la clause WHERE
+            conditions = [{"employee": employee}]
+            
+            # LOGIQUE CRITIQUE ICI : Si filtre demandé mais liste vide -> 0 résultat garanti
+            if doc_ids_filter is not None:
+                if len(doc_ids_filter) == 0:
+                    logger.warning(f"⚠️ [ChunkRepo] Filtre doc_ids activé mais VIDE. Retour immédiat de 0 résultats.")
+                    return {"ids": [], "documents": [], "metadatas": [], "distances": []}
+                
+                conditions.append({"doc": {"$in": doc_ids_filter}})
+
+            if len(conditions) > 1:
+                where_clause = {"$and": conditions}
+            else:
+                where_clause = conditions[0]
+
+            logger.info(f"🔍 [ChunkRepo] Query Chroma: '{query}' | Where: {where_clause}")
+
             results = self.collection.query(
                 query_texts=[query],
                 n_results=limit,
-                where={"employee": employee}
+                where=where_clause
             )
             return results
         except Exception as e:
@@ -203,6 +208,46 @@ class DocRepository(BaseRepository):
                 return DocResponse.model_validate(doc)
             return None
 
+    def get_filtered_doc_ids(self, employee: str, tags: list[str] = None, exclude_ids: list[str] = None) -> list[str]:
+        """
+        Récupère les IDs des documents qui correspondent aux tags ET qui ne sont pas exclus.
+        """
+        with self.get_session() as db:
+            # On récupère TOUS les docs "Done" de l'utilisateur pour filtrer en Python (plus simple pour les tags JSON)
+            query = db.query(DocModel).filter(
+                DocModel.employee == employee,
+                DocModel.status == "Done"
+            )
+            docs = query.all()
+            
+            valid_ids = []
+            target_tags = set(t.lower().strip() for t in tags) if tags else set()
+            excluded_set = set(exclude_ids) if exclude_ids else set()
+
+            logger.debug(f"🔎 [DocRepo] Filtrage tags: {target_tags} sur {len(docs)} docs candidats.")
+
+            for doc in docs:
+                if doc.doc in excluded_set:
+                    continue
+
+                # Si aucun tag demandé, on prend tout
+                if not target_tags:
+                    valid_ids.append(doc.doc)
+                    continue
+
+                # Vérification intersection
+                if doc.tags:
+                    # On s'assure que doc.tags est bien une liste de strings
+                    doc_tags_list = doc.tags if isinstance(doc.tags, list) else []
+                    doc_tags = set(str(t).lower().strip() for t in doc_tags_list)
+                    
+                    # Si au moins un tag correspond (intersection non vide)
+                    if not target_tags.isdisjoint(doc_tags):
+                        valid_ids.append(doc.doc)
+            
+            logger.info(f"✅ [DocRepo] {len(valid_ids)} IDs retenus pour la recherche.")
+            return valid_ids
+
     def upsert_doc(self, data: DocCreate) -> DocResponse:
         with self.get_session() as db:
             existing = db.query(DocModel).filter(
@@ -247,7 +292,6 @@ class DocRepository(BaseRepository):
                 db.commit()
 
     def delete_doc(self, doc_id: str, employee: str) -> dict:
-        # Import local pour éviter boucle
         from repositories.chunk import chunk_repository 
 
         with self.get_session() as db:
@@ -264,25 +308,16 @@ class DocRepository(BaseRepository):
                 ).first()
 
             if not doc:
-                return {
-                    "status": "success", 
-                    "message": "No document found to delete."
-                }
+                return {"status": "success", "message": "No document found to delete."}
 
             chunk_repository.delete_chunks_by_doc(doc.doc, employee)
             
             db.delete(doc)
             db.commit()
             
-            return {
-                "status": "success", 
-                "message": f"{doc_id} SUCCESS_DELETE"
-            }
-
-    # --- MÉTHODES REQUISES POUR LE FRONTEND (Node.js Parity) ---
+            return {"status": "success", "message": f"{doc_id} SUCCESS_DELETE"}
 
     def get_unique_tags(self, employee: str) -> list[str]:
-        """Retourne une liste simple de tags [str]"""
         with self.get_session() as db:
             results = db.query(DocModel.tags).filter(DocModel.employee == employee).all()
             unique_tags = set()
@@ -292,7 +327,6 @@ class DocRepository(BaseRepository):
             return sorted(list(unique_tags))
 
     def get_tags_with_count(self, employee: str) -> list[dict]:
-        """Retourne les tags avec leur nombre d'occurrences [{tag, count}]"""
         with self.get_session() as db:
             results = db.query(DocModel.tags).filter(DocModel.employee == employee).all()
             all_tags = []
@@ -301,23 +335,14 @@ class DocRepository(BaseRepository):
                     all_tags.extend(tag_list)
             
             counter = Counter(all_tags)
-            
-            # Tri par count décroissant, puis alphabétique
-            response = [
-                {"tag": tag, "count": count} 
-                for tag, count in counter.items()
-            ]
+            response = [{"tag": tag, "count": count} for tag, count in counter.items()]
             response.sort(key=lambda x: (-x["count"], x["tag"]))
             
             return response
 
     def get_unique_categories(self, employee: str) -> list[dict]:
-        """Retourne les catégories simples présentes dans les docs"""
         with self.get_session() as db:
-            results = db.query(DocModel.category).filter(
-                DocModel.employee == employee
-            ).distinct().all()
-            
+            results = db.query(DocModel.category).filter(DocModel.employee == employee).distinct().all()
             categories = []
             for (cat,) in results:
                 if cat:
@@ -325,12 +350,8 @@ class DocRepository(BaseRepository):
             return categories
 
     def get_all_active_categories(self) -> list[dict]:
-        """Retourne la configuration complète des catégories actives"""
         with self.get_session() as db:
-            cats = db.query(DocCategoryModel).filter(
-                DocCategoryModel.is_active == True
-            ).all()
-            
+            cats = db.query(DocCategoryModel).filter(DocCategoryModel.is_active == True).all()
             return [
                 {
                     "category": c.category,
@@ -343,14 +364,7 @@ class DocRepository(BaseRepository):
             ]
         
     def get_docs_by_tag(self, employee: str, tag: str) -> list[dict]:
-        """
-        Replique EXACTE de tagsManagement.handleGetTagsDocsWorkflow (Node.js)
-        Filtre les docs par tag et formate en DocSummary (aplatissement du pageContent).
-        """
         with self.get_session() as db:
-            # 1. Récupération brute (filtrage employé + exclusion Failed)
-            # Note: Le filtrage JSON exact "contains" dépend du moteur DB. 
-            # Pour la parité stricte et la compatibilité SQLite, on filtre le tag en Python.
             docs = db.query(DocModel).filter(
                 DocModel.employee == employee,
                 DocModel.status != "Failed"
@@ -360,14 +374,10 @@ class DocRepository(BaseRepository):
             target_tag = tag.strip().lower()
 
             for doc in docs:
-                # 2. Filtrage Tag (Case insensitive comme Node)
                 doc_tags = [t.lower() for t in (doc.tags or [])]
                 
                 if target_tag in doc_tags:
-                    # 3. Mapping "DocSummary" (Identique à tags.service.ts)
                     pc = doc.page_content or {}
-                    
-                    # Gestion sécurisée des sous-objets pour éviter crash si None
                     current_company = pc.get("current_company", {})
                     if not isinstance(current_company, dict): 
                         current_company = {}
@@ -385,8 +395,6 @@ class DocRepository(BaseRepository):
                         "origin": doc.origin,
                         "date_init": doc.date_init,
                         "date_update": doc.date_update,
-                        
-                        # --- CHAMPS APLATIS (FLATTENED) ---
                         "about": pc.get("about", ""),
                         "current_company_name": current_company.get("name", ""),
                         "current_title": current_company.get("title", ""),
@@ -394,7 +402,6 @@ class DocRepository(BaseRepository):
                         "manual_comment": doc.manual_comment or ""
                     }
                     results.append(summary)
-            
             return results
         
 doc_repository = DocRepository()
@@ -418,28 +425,56 @@ log_repository = LogRepository()
 # ------------------------------------------
 # FICHIER : repositories\prompt.py
 # ------------------------------------------
+import logging
 from sqlalchemy.orm import Session
 from database.models.prompt import PromptModel
 from schemas.prompt import PromptCreate, PromptResponse
 from .base import BaseRepository
 
+# Configuration du logger pour ce fichier
+logger = logging.getLogger(__name__)
+
 class PromptRepository(BaseRepository):
     
     def get_by_name(self, name: str) -> PromptResponse | None:
+        """Utilisé en interne par le backend"""
         with self.get_session() as db:
             prompt = db.query(PromptModel).filter(PromptModel.name == name).first()
             if prompt:
                 return PromptResponse.model_validate(prompt)
             return None
 
+    def get_prompts_for_user(self, employee: str) -> list[PromptResponse]:
+        """
+        Récupère UNIQUEMENT les prompts créés par l'utilisateur courant.
+        FILTRE STRICT : prompt.user == employee
+        """
+        logger.info(f"🔍 [PromptRepo] Recherche des prompts STRICTEMENT pour l'user: '{employee}'")
+        
+        with self.get_session() as db:
+            # Requête stricte
+            query = db.query(PromptModel).filter(PromptModel.user == employee)
+            
+            # Log de la requête SQL (pour debug avancé si besoin, sinon on log juste le count)
+            # logger.debug(f"📝 [PromptRepo] Query: {str(query)}")
+            
+            prompts = query.all()
+            count = len(prompts)
+            
+            logger.info(f"✅ [PromptRepo] Résultat : {count} prompt(s) trouvé(s) pour '{employee}'.")
+            
+            if count == 0:
+                logger.warning(f"⚠️ [PromptRepo] Attention: L'utilisateur '{employee}' n'a AUCUN prompt personnalisé en base.")
+            
+            return [PromptResponse.model_validate(p) for p in prompts]
+
     def upsert_prompt(self, data: PromptCreate) -> PromptResponse:
-        """
-        Met à jour le prompt s'il existe (basé sur le nom), sinon le crée.
-        """
+        logger.info(f"💾 [PromptRepo] Sauvegarde/Mise à jour du prompt : '{data.name}' pour user '{data.user}'")
         with self.get_session() as db:
             existing = db.query(PromptModel).filter(PromptModel.name == data.name).first()
             
             if existing:
+                logger.info(f"   -> Mise à jour du prompt existant (ID: {existing.id})")
                 existing.prompt = data.prompt
                 existing.user = data.user
                 existing.description = data.description
@@ -448,6 +483,7 @@ class PromptRepository(BaseRepository):
                 db.refresh(existing)
                 return PromptResponse.model_validate(existing)
             else:
+                logger.info(f"   -> Création d'un nouveau prompt")
                 new_prompt = PromptModel(**data.model_dump())
                 db.add(new_prompt)
                 db.commit()

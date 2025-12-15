@@ -50,27 +50,30 @@ class SearchRequest(BaseModel):
 # ------------------------------------------
 # FICHIER : schemas\chat.py
 # ------------------------------------------
-# Fichier : schemas/chat.py
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+# FICHIER : schemas/chat.py
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional, Dict, Any, Union
 
-class ChatRequestLegacy(BaseModel):
-    """
-    Schéma strict correspondant à la requête du frontend Node.js.
-    Gère les filtres d'exclusion et l'historique.
-    """
-    question: str
-    employee: str
-    tags: List[str] = []
+class ChatRequestNode(BaseModel):
+    # CORRECTION : On ajoute = "" pour le rendre optionnel
+    question: str = Field(default="", alias="input") 
+    employee: str = Field(..., alias="user")
     
-    # Filtres avancés (Exclusion, Historique, Prompt spécifique)
-    exclude: Optional[Dict[str, Any]] = None 
-    history: Optional[List[Any]] = None
+    tags: Union[List[str], str] = []
+    
+    # Rappel de la correction précédente pour exclude
+    exclude: Union[Dict[str, Any], List[Any], None] = Field(default_factory=dict)
+    
+    history: Optional[List[Dict[str, Any]]] = []
     prompt: Optional[str] = None
-    strict_context: Optional[bool] = False
-    
-    # Contexte technique
+    strict_context: Optional[bool] = True
     job_id: Optional[str] = None
+
+    # ... (Garder les validateurs existants)
+    
+    class Config:
+        extra = "ignore"
+        populate_by_name = True
 
 # ------------------------------------------
 # FICHIER : schemas\doc.py

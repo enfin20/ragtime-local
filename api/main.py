@@ -3,6 +3,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database.connection import engine
 from database.models import Base
+from fastapi.exceptions import RequestValidationError
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse
 import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -21,6 +24,15 @@ app = FastAPI(
     description="API pour Ingestion et Chat RAG avec LLM Local",
     version="1.0.0"
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Affiche le corps de la requête reçue et l'erreur de validation
+    body = await request.body()
+    print(f"\n❌ ERREUR 422 - Validation Failed:")
+    print(f"📥 Body reçu : {body.decode('utf-8')}")
+    print(f"⚠️ Détail erreur : {exc.errors()}\n")
+    return JSONResponse(status_code=422, content={"detail": exc.errors(), "body": body.decode('utf-8')})
 
 # Configuration CORS (Pour autoriser le frontend)
 app.add_middleware(

@@ -1,5 +1,5 @@
 PROJET PYTHON LOCAL
-Généré le : 2025-12-15 14:11:50.179886
+Généré le : 2025-12-15 17:14:42.044492
 
 racine
 ├── api
@@ -89,6 +89,7 @@ racine
 │   │   ├── factory.py
 │   │   └── manager.py
 │   ├── __init__.py
+│   ├── agent_tools.py
 │   ├── chat.py
 │   ├── ingestion.py
 │   └── llm.py
@@ -96,5 +97,6 @@ racine
 │   ├── json_parser.py
 │   ├── linkedin_cleaner.py
 │   └── text_extractor.py
+├── .gitignore
 ├── rag_test.py
 └── requirements.txt

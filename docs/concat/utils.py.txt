@@ -8,43 +8,62 @@
 # ------------------------------------------
 import json
 import logging
-import re
 
 logger = logging.getLogger(__name__)
 
 def robust_json_parse(llm_output: str) -> dict | list | None:
     """
-    Tente d'extraire un JSON valide d'une réponse LLM, même si elle contient du markdown.
+    Extrait un JSON (Objet ou Liste) de manière robuste sans Regex complexes.
     """
     if not llm_output:
         return None
 
-    try:
-        # 1. Tentative directe
-        return json.loads(llm_output)
-    except json.JSONDecodeError:
-        pass
+    text = llm_output.strip()
 
-    # 2. Extraction du bloc Markdown ```json ... ```
-    match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", llm_output, re.IGNORECASE)
-    if match:
-        json_str = match.group(1)
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
+    # 1. Nettoyage basique des balises Markdown ```json ... ```
+    if "```" in text:
+        lines = text.splitlines()
+        # On filtre les lignes qui contiennent ```
+        text = "\n".join([l for l in lines if "```" not in l]).strip()
 
-    # 3. Extraction brutale entre la première { et la dernière }
-    try:
-        start = llm_output.find("{")
-        end = llm_output.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            json_str = llm_output[start:end+1]
-            return json.loads(json_str)
-    except Exception as e:
-        logger.error(f"Failed to parse JSON from LLM output: {e}")
+    # 2. Recherche des bornes JSON (Optimisé)
+    # On cherche le premier '[' ou '{'
+    first_square = text.find('[')
+    first_curly = text.find('{')
     
-    return None
+    start_index = -1
+    is_array = False
+
+    # Détermination du début (lequel arrive en premier ?)
+    if first_square != -1 and first_curly != -1:
+        if first_square < first_curly:
+            start_index = first_square
+            is_array = True
+        else:
+            start_index = first_curly
+    elif first_square != -1:
+        start_index = first_square
+        is_array = True
+    elif first_curly != -1:
+        start_index = first_curly
+    
+    if start_index == -1:
+        return None
+
+    # Détermination de la fin correspondante
+    end_char = ']' if is_array else '}'
+    end_index = text.rfind(end_char)
+
+    if end_index == -1 or end_index < start_index:
+        return None
+
+    json_candidate = text[start_index : end_index + 1]
+
+    try:
+        return json.loads(json_candidate)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON Decode Error: {e}")
+        return None
 
 # ------------------------------------------
 # FICHIER : utils\linkedin_cleaner.py

@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import requests
+import re
 from bs4 import BeautifulSoup
 from datetime import datetime
 
@@ -16,40 +17,63 @@ from services.chunking.enrichment import enrichment_service
 logger = logging.getLogger(__name__)
 
 class IngestionService:
-    
+
+    def _clean_text_content(self, html_content: str) -> str:
+        if not html_content:
+            return ""
+
+        soup = BeautifulSoup(html_content, 'html.parser')
+
+        # 1. Suppression balises techniques/navigation
+        for tag in soup(["script", "style", "nav", "footer", "aside", "form", "iframe", "noscript", "header"]):
+            tag.decompose()
+
+        # 2. Suppression par patterns CSS (Sidebar, Related, Comments)
+        noise_patterns = re.compile(r'(related|recommend|share|social|comment|sidebar|newsletter|author-bio|cookie|promo)', re.IGNORECASE)
+        for tag in soup.find_all(attrs={"class": noise_patterns}):
+            tag.decompose()
+        for tag in soup.find_all(attrs={"id": noise_patterns}):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n")
+
+        # 3. La "Guillotine" : on coupe dès qu'on voit ces titres
+        stop_phrases = [
+            "Related Articles", "You might also like", "Recommended for you",
+            "Share this article", "About the Author", "Written by",
+            "Submit an Article", "Editors Pick", "Read Next"
+        ]
+        
+        lines = []
+        for line in text.splitlines():
+            clean_line = line.strip()
+            if not clean_line:
+                continue
+            
+            # Si une ligne commence par une phrase d'arrêt, on stoppe tout
+            stop_hit = False
+            for phrase in stop_phrases:
+                if clean_line.lower() == phrase.lower() or clean_line.lower().startswith(phrase.lower() + ":"):
+                    stop_hit = True
+                    break
+            
+            if stop_hit:
+                logger.info(f"✂️  Texte coupé au marqueur : '{clean_line}'")
+                break 
+            
+            lines.append(clean_line)
+
+        return "\n".join(lines)
+
     def _fallback_scrape(self, url: str) -> str:
-        """
-        Plan B : Scraping classique si l'API Tavily échoue.
-        """
-        logger.info(f"🛡️ [Fallback] Tentative de scraping standard pour : {url}")
+        logger.info(f"🛡️ [Fallback] Scraping : {url}")
         try:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            }
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0"}
             response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # On essaie de récupérer le texte principal
-            # On vire les scripts et styles
-            for script in soup(["script", "style", "nav", "footer"]):
-                script.decompose()
-                
-            text = soup.get_text(separator="\n")
-            
-            # Nettoyage basique des lignes vides
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            clean_text = '\n'.join(chunk for chunk in chunks if chunk)
-            
-            if len(clean_text) < 50:
-                return ""
-                
-            return clean_text
-            
+            return self._clean_text_content(response.text)
         except Exception as e:
-            logger.error(f"❌ [Fallback] Echec aussi : {e}")
+            logger.error(f"❌ [Fallback] Erreur : {e}")
             return ""
 
     def process_input(self, input_data: str | dict, employee: str, tags: list[str], origin: str = "manual"):
@@ -64,22 +88,20 @@ class IngestionService:
             category = "website"
             doc_name = input_data
             
-            # [cite_start]1. Tentative Tavily [cite: 117]
-            content_data = tavily_repository.extract_content(input_data)
-            
-            # 2. Tentative Fallback si vide
-            if not content_data:
-                logger.warning(f"⚠️ Tavily n'a rien renvoyé pour {input_data}. Passage au Fallback.")
+            # Nettoyage systématique même sur Tavily
+            raw_tavily = tavily_repository.extract_content(input_data)
+            if raw_tavily:
+                content_data = self._clean_text_content(raw_tavily)
+            else:
                 content_data = self._fallback_scrape(input_data)
 
             if not content_data:
-                raise Exception(f"Contenu vide pour l'URL (Protection anti-bot ou erreur) : {input_data}")
+                raise Exception(f"Contenu vide pour l'URL : {input_data}")
 
         elif isinstance(input_data, str) and os.path.exists(input_data) and os.path.isfile(input_data):
-            logger.info(f"📁 Fichier local détecté : {input_data}")
+            logger.info(f"📁 Fichier local : {input_data}")
             source_type = "file"
             doc_name = os.path.basename(input_data)
-            
             if input_data.endswith(".json"):
                 with open(input_data, 'r', encoding='utf-8') as f:
                     content_data = json.load(f)
@@ -89,9 +111,8 @@ class IngestionService:
                 category = "document"
 
         else:
-            logger.info("📦 Donnée brute détectée")
+            logger.info("📦 Donnée brute")
             source_type = "raw"
-            
             if isinstance(input_data, dict):
                 content_data = input_data
                 if "post_text" in input_data or "text" in input_data:
@@ -108,57 +129,37 @@ class IngestionService:
 
     def _process_content(self, doc_id: str, content_data: any, category: str, employee: str, tags: list[str], origin: str, source: str):
         job_id = f"job_{int(datetime.now().timestamp())}"
-        
         preview_text = str(content_data)[:3000]
-        synthesis_data = {}
         
+        # Synthèse IA
+        synthesis_data = {}
         try:
-            logger.info(f"🧠 [Ingestion] Generating synthesis for {doc_id}...")
             synthesis_input = f"Doc: {doc_id}\nContent: {preview_text}"
             synthesis_data = enrichment_service.extract_metadata(synthesis_input, "synthesis_tags")
         except Exception as e:
-            logger.warning(f"⚠️ Failed to generate synthesis: {e}")
-
-        doc_synthesis = synthesis_data.get("synthesis", "")
-        doc_suggested_tags = synthesis_data.get("suggested_tags", [])
-
-        page_content_storage = content_data if isinstance(content_data, dict) else {"text": content_data}
+            logger.warning(f"⚠️ Erreur Synthèse: {e}")
 
         doc_data = DocCreate(
-            doc=doc_id,
-            category=category,
-            source=source,
-            origin=origin,
-            tags=tags,
-            status="Processing",
-            employee=employee,
-            job_id=job_id,
-            page_content=page_content_storage,
-            synthesis=doc_synthesis,
-            suggested_tags=doc_suggested_tags
+            doc=doc_id, category=category, source=source, origin=origin, tags=tags,
+            status="Processing", employee=employee, job_id=job_id,
+            page_content=content_data if isinstance(content_data, dict) else {"text": content_data},
+            synthesis=synthesis_data.get("synthesis", ""),
+            suggested_tags=synthesis_data.get("suggested_tags", [])
         )
         doc_repository.upsert_doc(doc_data)
 
         try:
             chunks_to_save = chunking_manager.chunk_data(doc_id, content_data, category, tags)
-
             if not chunks_to_save:
-                logger.warning(f"⚠️ Aucun chunk généré pour {doc_id}")
-
-            chunk_repository.add_chunks(doc_id, employee, chunks_to_save)
-
-            doc_repository.update_status(doc_id, employee, "Done")
-            logger.info(f"✅ [Ingestion] Success. {len(chunks_to_save)} chunks created via strategy.")
+                logger.warning(f"⚠️ 0 chunk pour {doc_id}")
             
-            return {
-                "status": "success", 
-                "doc_id": doc_id,
-                "chunks_count": len(chunks_to_save),
-                "strategy": category
-            }
+            chunk_repository.add_chunks(doc_id, employee, chunks_to_save)
+            doc_repository.update_status(doc_id, employee, "Done")
+            
+            return {"status": "success", "doc_id": doc_id, "chunks_count": len(chunks_to_save), "strategy": category}
 
         except Exception as e:
-            logger.error(f"❌ [Ingestion] Error: {e}")
+            logger.error(f"❌ Erreur Ingestion: {e}")
             doc_repository.update_status(doc_id, employee, "Failed")
             raise e
 

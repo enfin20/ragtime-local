@@ -56,11 +56,13 @@ class ChunkRepository:
 
     def search(self, query: str, employee: str, limit: int = 5, doc_ids_filter: Optional[List[str]] = None):
         try:
-            # Construction de la clause WHERE avec $and explicite pour éviter l'erreur Chroma
+            # Construction de la clause WHERE
             conditions = [{"employee": employee}]
             
+            # LOGIQUE CRITIQUE ICI : Si filtre demandé mais liste vide -> 0 résultat garanti
             if doc_ids_filter is not None:
                 if len(doc_ids_filter) == 0:
+                    logger.warning(f"⚠️ [ChunkRepo] Filtre doc_ids activé mais VIDE. Retour immédiat de 0 résultats.")
                     return {"ids": [], "documents": [], "metadatas": [], "distances": []}
                 
                 conditions.append({"doc": {"$in": doc_ids_filter}})
@@ -69,6 +71,8 @@ class ChunkRepository:
                 where_clause = {"$and": conditions}
             else:
                 where_clause = conditions[0]
+
+            logger.info(f"🔍 [ChunkRepo] Query Chroma: '{query}' | Where: {where_clause}")
 
             results = self.collection.query(
                 query_texts=[query],

@@ -32,9 +32,9 @@ class DocRepository(BaseRepository):
     def get_filtered_doc_ids(self, employee: str, tags: list[str] = None, exclude_ids: list[str] = None) -> list[str]:
         """
         Récupère les IDs des documents qui correspondent aux tags ET qui ne sont pas exclus.
-        Sert de pré-filtre pour la recherche vectorielle.
         """
         with self.get_session() as db:
+            # On récupère TOUS les docs "Done" de l'utilisateur pour filtrer en Python (plus simple pour les tags JSON)
             query = db.query(DocModel).filter(
                 DocModel.employee == employee,
                 DocModel.status == "Done"
@@ -45,19 +45,28 @@ class DocRepository(BaseRepository):
             target_tags = set(t.lower().strip() for t in tags) if tags else set()
             excluded_set = set(exclude_ids) if exclude_ids else set()
 
+            logger.debug(f"🔎 [DocRepo] Filtrage tags: {target_tags} sur {len(docs)} docs candidats.")
+
             for doc in docs:
                 if doc.doc in excluded_set:
                     continue
 
+                # Si aucun tag demandé, on prend tout
                 if not target_tags:
                     valid_ids.append(doc.doc)
                     continue
 
+                # Vérification intersection
                 if doc.tags:
-                    doc_tags = set(str(t).lower().strip() for t in doc.tags)
+                    # On s'assure que doc.tags est bien une liste de strings
+                    doc_tags_list = doc.tags if isinstance(doc.tags, list) else []
+                    doc_tags = set(str(t).lower().strip() for t in doc_tags_list)
+                    
+                    # Si au moins un tag correspond (intersection non vide)
                     if not target_tags.isdisjoint(doc_tags):
                         valid_ids.append(doc.doc)
             
+            logger.info(f"✅ [DocRepo] {len(valid_ids)} IDs retenus pour la recherche.")
             return valid_ids
 
     def upsert_doc(self, data: DocCreate) -> DocResponse:
