@@ -1,0 +1,1456 @@
+# ==========================================
+# GROUPE : scripts
+# ==========================================
+
+
+# ------------------------------------------
+# FICHIER : scripts\__init__.py
+# ------------------------------------------
+
+
+# ------------------------------------------
+# FICHIER : scripts\clean_data.py
+# ------------------------------------------
+import sys
+import os
+from pathlib import Path
+from sqlalchemy.orm import Session
+
+# Path hack
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine, get_chroma_client
+from database.models import DocModel, ApiLogModel
+
+LOG_DIR = Path("logs")
+
+def clean_data():
+    print("🔥 Démarrage du nettoyage (Mode : Business Data Only)...")
+    print("   (Les Users et Prompts seront conservés)")
+
+    # --- 1. NETTOYAGE LOGS ---
+    if LOG_DIR.exists():
+        print("📝 Nettoyage des logs fichiers...")
+        for log_file in LOG_DIR.glob("*.log"):
+            with open(log_file, "w") as f:
+                f.write("")
+            print(f"   - Vidé : {log_file.name}")
+
+    # --- 2. NETTOYAGE SQLITE (CIBLÉ) ---
+    print("🗄️  Nettoyage SQLite (Docs & Logs)...")
+    with Session(engine) as session:
+        # On supprime uniquement les données métier
+        deleted_docs = session.query(DocModel).delete()
+        deleted_logs = session.query(ApiLogModel).delete()
+        session.commit()
+        print(f"✅ Supprimé : {deleted_docs} documents")
+        print(f"✅ Supprimé : {deleted_logs} logs d'API")
+        print("ℹ️  Users et Prompts conservés.")
+
+    # --- 3. NETTOYAGE CHROMA ---
+    print("🎨 Reset ChromaDB (Vecteurs)...")
+    try:
+        client = get_chroma_client()
+        try:
+            client.delete_collection("rag_chunks")
+            print("✅ Collection 'rag_chunks' supprimée.")
+        except ValueError:
+            pass # N'existait pas
+        
+        # On recrée vide
+        client.get_or_create_collection("rag_chunks")
+        print("✅ Collection 'rag_chunks' recréée vide.")
+        
+    except Exception as e:
+        print(f"❌ Erreur Chroma : {e}")
+
+    print("\n🧹 Nettoyage terminé ! Prêt pour une nouvelle ingestion.")
+
+if __name__ == "__main__":
+    clean_data()
+
+# ------------------------------------------
+# FICHIER : scripts\concat_code.py
+# ------------------------------------------
+import os
+from pathlib import Path
+from datetime import datetime
+
+# --- CONFIGURATION ---
+BASE_DIR = Path(__file__).parent.parent # Racine du projet (rag_local)
+OUTPUT_DIR = Path("docs/concat")
+
+# Liste exhaustive des dossiers à scanner
+TARGETS = [
+    {
+        "name": "database", 
+        "paths": ["database", "database/models"] # <-- Ajout de models
+    },
+    {
+        "name": "schemas", 
+        "paths": ["schemas"]
+    },
+    {
+        "name": "repositories", 
+        "paths": ["repositories"]
+    },
+    {
+        "name": "utils", 
+        "paths": ["utils"]
+    },
+    {
+        "name": "services_core", 
+        "paths": ["services"] # llm.py, ingestion.py...
+    },
+    {
+        "name": "services_chunking", 
+        "paths": ["services/chunking", "services/chunking/strategies"] # <-- Ajout des stratégies
+    },
+    {
+        "name": "api", 
+        "paths": ["api", "api/routes"] # <-- Ajout des routes
+    },
+    {
+        "name": "scripts", 
+        "paths": ["scripts"]
+    },
+]
+
+IGNORE_DIRS = ["__pycache__", ".venv", "venv", ".git", ".vscode", "logs", "docs", "data"]
+IGNORE_FILES = [".DS_Store", "local_database.db", ".env"]
+
+def generate_tree(dir_path: Path, prefix: str = ""):
+    output = ""
+    try:
+        # Trier : Dossiers d'abord, puis fichiers
+        items = sorted(list(dir_path.iterdir()), key=lambda x: (not x.is_dir(), x.name.lower()))
+        
+        filtered_items = [
+            i for i in items 
+            if i.name not in IGNORE_DIRS 
+            and i.name not in IGNORE_FILES
+            and not i.name.endswith(".pyc")
+        ]
+
+        for index, item in enumerate(filtered_items):
+            is_last = (index == len(filtered_items) - 1)
+            connector = "└── " if is_last else "├── "
+            output += f"{prefix}{connector}{item.name}\n"
+
+            if item.is_dir():
+                extension = "    " if is_last else "│   "
+                output += generate_tree(item, prefix + extension)
+    except PermissionError:
+        pass
+    return output
+
+def concat_files():
+    if not OUTPUT_DIR.exists():
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    print("🚀 Début de la concaténation Python (Complète)...\n")
+
+    # 1. Génération Arborescence
+    print("--- Génération Arborescence ---")
+    tree_str = f"PROJET PYTHON LOCAL\nGénéré le : {datetime.now()}\n\nracine\n"
+    tree_str += generate_tree(BASE_DIR)
+    
+    with open(OUTPUT_DIR / "arborescence.txt", "w", encoding="utf-8") as f:
+        f.write(tree_str)
+    print("✅ arborescence.txt généré.")
+
+    # 2. Concaténation par groupe
+    print("\n--- Concaténation des sources ---")
+    
+    for target in TARGETS:
+        out_file = OUTPUT_DIR / f"{target['name']}.py.txt"
+        
+        file_count = 0
+        content_buffer = f"# ==========================================\n# GROUPE : {target['name']}\n# ==========================================\n\n"
+
+        for rel_path in target['paths']:
+            abs_path = BASE_DIR / rel_path
+            
+            if not abs_path.exists():
+                # print(f"⚠️ Chemin introuvable (ignoré) : {rel_path}")
+                continue
+
+            # On scanne les fichiers .py dans ce dossier précis
+            files = list(abs_path.glob("*.py"))
+            files.sort()
+
+            for file_path in files:
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        code = f.read()
+                    
+                    relative_name = file_path.relative_to(BASE_DIR)
+                    content_buffer += f"\n# ------------------------------------------\n"
+                    content_buffer += f"# FICHIER : {relative_name}\n"
+                    content_buffer += f"# ------------------------------------------\n"
+                    content_buffer += code + "\n"
+                    file_count += 1
+                except Exception as e:
+                    print(f"Erreur lecture {file_path}: {e}")
+
+        if file_count > 0:
+            with open(out_file, "w", encoding="utf-8") as f:
+                f.write(content_buffer)
+            print(f"✅ {target['name']} ({file_count} fichiers)")
+        else:
+            print(f"ℹ️  {target['name']} (Vide)")
+
+    print("\n🏁 Terminé ! Vérifiez le dossier docs/concat/")
+
+if __name__ == "__main__":
+    concat_files()
+
+# ------------------------------------------
+# FICHIER : scripts\debug_search.py
+# ------------------------------------------
+import requests
+import json
+
+def debug_search():
+    url = "http://127.0.0.1:8000/search/"
+    payload = {
+        "query": "Goldorak",
+        "employee": "admin_ui",
+        "limit": 3
+    }
+
+    print(f"🔍 Recherche brute sur : {url}")
+    try:
+        r = requests.post(url, json=payload)
+        if r.status_code == 200:
+            data = r.json()
+            print(f"✅ {data['count']} résultats trouvés.\n")
+            for res in data['results']:
+                print(f"--- Score: {res['score_distance']} ---")
+                print(f"CONTENU : {res['content']}")
+                print(f"METADATA : {res['metadata']}\n")
+        else:
+            print(f"❌ Erreur {r.status_code} : {r.text}")
+    except Exception as e:
+        print(f"❌ Erreur connexion : {e}")
+
+if __name__ == "__main__":
+    debug_search()
+
+# ------------------------------------------
+# FICHIER : scripts\export_data.py
+# ------------------------------------------
+import sys
+import os
+import json
+import datetime
+from sqlalchemy.orm import Session
+from pathlib import Path
+
+# Path hack
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine, get_chroma_client
+from database.models import LoginModel, DocModel, ApiLogModel, PromptModel, Base
+
+# Configuration
+EXPORT_PATH = Path("docs/export_python")
+
+# Helper pour gérer les dates dans le JSON
+def json_serial(obj):
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+def sqlalchemy_to_dict(obj):
+    """Convertit un objet SQLAlchemy en dictionnaire propre"""
+    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+def export_data():
+    print("📦 Démarrage de l'export Data (SQLite + Chroma)...")
+    
+    # Création dossier
+    if not EXPORT_PATH.exists():
+        EXPORT_PATH.mkdir(parents=True, exist_ok=True)
+        print(f"📂 Dossier créé : {EXPORT_PATH}")
+
+    # 1. EXPORT SQLITE
+    with Session(engine) as session:
+        # Docs
+        docs = session.query(DocModel).all()
+        docs_data = [sqlalchemy_to_dict(d) for d in docs]
+        with open(EXPORT_PATH / "Docs.json", "w", encoding="utf-8") as f:
+            json.dump(docs_data, f, default=json_serial, indent=2, ensure_ascii=False)
+        print(f"✅ [SQLite] Docs exportés : {len(docs_data)}")
+
+        # Logins
+        users = session.query(LoginModel).all()
+        users_data = [sqlalchemy_to_dict(u) for u in users]
+        with open(EXPORT_PATH / "Logins.json", "w", encoding="utf-8") as f:
+            json.dump(users_data, f, default=json_serial, indent=2, ensure_ascii=False)
+        print(f"✅ [SQLite] Logins exportés : {len(users_data)}")
+
+        # Prompts
+        prompts = session.query(PromptModel).all()
+        prompts_data = [sqlalchemy_to_dict(p) for p in prompts]
+        with open(EXPORT_PATH / "Prompts.json", "w", encoding="utf-8") as f:
+            json.dump(prompts_data, f, default=json_serial, indent=2, ensure_ascii=False)
+        print(f"✅ [SQLite] Prompts exportés : {len(prompts_data)}")
+
+    # 2. EXPORT CHROMA (Chunks)
+    try:
+        chroma_client = get_chroma_client()
+        collection = chroma_client.get_collection("rag_chunks")
+        # On récupère tout
+        results = collection.get()
+        
+        # Reformatage pour lisibilité
+        chunks_data = []
+        if results["ids"]:
+            for i, id_val in enumerate(results["ids"]):
+                chunks_data.append({
+                    "id": id_val,
+                    "content": results["documents"][i],
+                    "metadata": results["metadatas"][i]
+                })
+
+        with open(EXPORT_PATH / "Chunks_Chroma.json", "w", encoding="utf-8") as f:
+            json.dump(chunks_data, f, indent=2, ensure_ascii=False)
+        print(f"✅ [Chroma] Chunks exportés : {len(chunks_data)}")
+
+    except Exception as e:
+        print(f"⚠️ Erreur export Chroma (collection vide ?) : {e}")
+
+    print(f"\n🎉 Export terminé dans : {EXPORT_PATH.absolute()}")
+
+if __name__ == "__main__":
+    export_data()
+
+# ------------------------------------------
+# FICHIER : scripts\seed_prompts.py
+# ------------------------------------------
+import sys
+import os
+import json
+
+# Path hack
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine
+from database.models import Base
+from repositories.prompt import prompt_repository
+from schemas.prompt import PromptCreate
+
+# VOS DONNÉES JSON (Copiées depuis votre fichier)
+RAW_PROMPTS_DATA = [
+  {
+    "name": "synthesis_tags",
+    "user": "system",
+    "prompt": "# RÔLE ET OBJECTIF\n\nTu es un assistant IA expert en analyse de contenu.\nTa mission est d'analyser le document JSON fourni et de générer un objet JSON contenant une synthèse et des mots-clés.\n\n# DIRECTIVES STRICTES DE SORTIE\n\nLa sortie doit être **uniquement et exclusivement un objet JSON valide**. N'ajoute AUCUN texte, salutation ou commentaire avant ou après le bloc JSON.\n\nLa structure de sortie DOIT être la suivante :\n```json\n{\n  \"synthesis\": \"...\",\n  \"suggested_tags\": [\"...\", \"...\"]\n}\n```\n\n---\n## INSTRUCTIONS DÉTAILLÉES POUR LE CONTENU DU JSON\n\n### 1. Clé `synthesis`\n\n-   **LANGUE** : La synthèse doit être rédigée **impérativement en ANGLAIS**.\n-   **TON** : Professionnel, neutre et factuel.\n-   **LONGUEUR** : Concise, environ 15 lignes maximum.\n-   **CONTENU** : Identifie le type de document (Profil, Entreprise, Post) en te basant sur le champ `{{doc}}` ou `{{url}}` et suis les règles de contenu ci-dessous.\n\n#### A. Pour un Profil (`/in/`) :\n-   Rédige un résumé du parcours professionnel en 3 ou 4 points clés :\n    * Le poste actuel, l'entreprise et les responsabilités principales.\n    * Les expériences passées les plus significatives.\n    * Les compétences majeures et domaines d'expertise.\n    * (Optionnel) La formation la plus pertinente.\n\n#### B. Pour une Entreprise (`/company/`) :\n-   Rédige une fiche d'identité de l'entreprise en 4 ou 5 points clés :\n    * La mission principale, le secteur d'activité (`industry`) et le slogan (`tagline`).\n    * Une description des produits, services ou solutions.\n    * La taille de l'entreprise (`headcount`) et son siège social si disponible.\n    * Un aperçu de l'activité ou des annonces récentes.\n\n#### C. Pour une Publication (`/posts/`, `/pulse/`) :\n-   Commence par un titre que tu crées (ex: \"**Title: Analysis of AI's Impact on FinTech**\").\n-   En 3 ou 4 points clairs, résume les arguments principaux, les questions posées ou les informations partagées.\n-   Conclus par une phrase mentionnant la popularité si les chiffres (`likes_count`) sont significatifs.\n\n#### D. Pour une Source Générale (Autre URL) :\n-   Commence par le titre de la page ou un titre descriptif que tu génères (ex: \"**Title: Overview of [Page Topic]**\").\n-   Identifie le sujet principal et résume les points d'information clés ou les sections principales.\n\n### 2. Clé `suggested_tags`\n\n-   Un tableau de **5 mots-clés maximum** (tu peux en mettre moins).\n-   Doit être en **anglais** et en **minuscule**.\n-   Format : Pas d'espace, combine les mots (ex: `projectmanagement`).\n-   Priorise les concepts clés, technologies, ou secteurs d'activité.\n\n---\n## CONTEXTE : DONNÉES D'ENTRÉE\n\n-   `{{doc}}` ou `{{url}}` : L'URL de la page source.\n-   `{{document_json}}` : L'objet JSON contenant les données extraites.\n"
+  },
+  {
+    "name": "chunk_post",
+    "user": "system",
+    "prompt": "# RÔLE ET OBJECTIF\n\nTu es un assistant expert en extraction de données sémantiques à partir de textes non structurés. Ta mission est d'analyser un texte de publication LinkedIn (`post_text`) et d'en extraire les informations clés pour remplir un objet JSON `metadata`. Tu dois être extrêmement précis et ne retourner que les informations explicitement présentes dans le texte.\n\n# STRUCTURE DE SORTIE ATTENDUE\n\nLa sortie doit être un objet JSON unique contenant une clé `metadata`. N'ajoute aucun commentaire ou texte en dehors de cet objet JSON.\nLa structure de l'objet `metadata` est la suivante :\n\n{\n  \"metadata\": {\n    \"name\": \"string\",\n    \"company\": \"string\",\n    \"industry\": \"string\",\n    \"location\": \"string\",\n\t\"title\" : \"string\",\n\t\"dates\": \"number[] (un tableau d'années)\",\n    \"likes_count\": \"Number\",\n    \"city\": \"string\",\n    \"type\": \"'general' | 'experience' | 'education' | 'post' | 'update'\"\n  }\n}\n\n# INSTRUCTIONS DÉTAILLÉES POUR CHAQUE CHAMP\n\n- **name**: des noms de personnes clés mentionnées dans le texte si ils concernent uniquement le sujet principal du texte. Il peut y avoir plusieurs noms séparés par un \";\".\n- **company**: des noms d'entreprises clés mentionnées dans le post si elles concernent uniquement le sujet principal du texte. Il peut y avoir plusieurs noms séparés par un \";\".\n- **industry**: Les principaux secteurs d'activités mentionnées dans le post si ils concernent uniquement le sujet principal du texte. Il peut y avoir plusieurs noms séparés par un \";\".\n- **location / city**: Les principales localisations géographique (ville, pays) mentionnées si elles concernent uniquement le sujet principal du texte. Privilégie la ville pour le champ `city` et une information plus large pour `location`. Il peut y avoir plusieurs noms séparés par un \";\"\n- **title**: Le titre du poste ou de la position mentionnée (ex: \"Développeur Full Stack\", \"Directeur Marketing\") si c'est le sujet principal du texte. Si le post est un article, ce peut être le titre de l'article.\n- **dates**: Un tableau contenant toutes les années mentionnées dans le texte (ex: \"J'ai travaillé de 2019 à 2022\" -> `[2019, 2022]`). Extrait uniquement les nombres à 4 chiffres qui ressemblent à des années si le sujet global du texte concerne uniquement un emploi, posteou une mission.\n- **likes_count**: Le nombre de \"likes\" ou de réactions, si cette information est présente dans le texte (ex: \"Ce post a atteint 500 likes !\").\n- **type**: Classifie le post selon les catégories suivantes :\n  - **'experience'**: Annonce un nouveau poste, une promotion, un départ, un anniversaire de carrière.\n  - **'education'**: Annonce l'obtention d'un diplôme, d'une certification, le début ou la fin d'une formation.\n  - **'post'**: Partage des nouvelles sur un projet, une entreprise, un événement à venir. Partage une opinion, un article, pose une question, contenu de type \"thought leadership\"\n  - **'general'**: Tout ce qui ne rentre pas dans les autres catégories.\n\n# RÈGLES STRICTES\n\n1.  **NE PAS INVENTER** : Si une information n'est pas explicite ou si une relation n'est pas claire, ne l'inclus pas.\n2.  **FORMAT JSON VALIDE** : La sortie doit être un objet JSON valide, sans texte avant ou après.\n3.  **PRÉCISION AVANT TOUT** : Sois méticuleux. Par exemple, si le texte dit \"Paris\", remplis `city: \"Paris\"`.\n4.  **CHAMP `type` OBLIGATOIRE** : Le seul champ qui doit toujours être présent est `type`. Fais de ton mieux pour classifier le post.\n"
+  },
+  {
+    "name": "chunk_about",
+    "user": "system",
+    "prompt": "# RÔLE ET OBJECTIF\n\nTu es un assistant expert en analyse sémantique de textes professionnels.\nTa mission est d'analyser un texte (`about_text`) provenant d'une section \"À propos\" d'un profil ou d'une description d'expérience.\nTu dois en extraire un ensemble riche et structuré d'informations clés pour remplir un objet JSON `metadata`.\nTu dois être extrêmement précis et ne retourner que les informations **explicitement présentes** dans le texte.\n\n---\n\n# STRUCTURE DE SORTIE ATTENDUE\n\nLa sortie doit être un objet JSON unique contenant une clé `metadata`. N'ajoute aucun commentaire ou texte en dehors de cet objet JSON.\nLa structure de l'objet `metadata` est la suivante :\n\n```json\n{\n  \"metadata\": {\n    \"hard_skills\": \"string[]\",\n    \"soft_skills\": \"string[]\",\n    \"technologies\": \"string[]\",\n    \"key_topics\": \"string[]\",\n    \"projects\": \"string[]\",\n    \"certifications\": \"string[]\",\n    \"languages\": \"string[]\",\n    \"metrics\": \"string[]\"\n  }\n}\n\n# INSTRUCTIONS DÉTAILLÉES POUR CHAQUE CHAMP\nhard_skills: Extrait les compétences techniques, fonctionnelles ou métiers mesurables (savoir-faire).\nExemples : \"Marketing Digital\", \"Gestion de projet Agile\", \"Analyse financière\".\nsoft_skills: Extrait les qualités humaines, comportementales et interpersonnelles (savoir-être).\nExemples : \"Leadership\", \"Esprit d'équipe\", \"Adaptabilité\", \"Résolution de problèmes\".\ntechnologies: Extrait les noms d'outils, logiciels, frameworks, langages de programmation ou plateformes spécifiques.\nExemples : \"Python\", \"React.js\", \"AWS\", \"Google Analytics\", \"Salesforce\".\nkey_topics: Extrait les grands thèmes, concepts, secteurs d'activité ou centres d'intérêt abordés.\nExemples : \"Intelligence Artificielle\", \"Transformation digitale\", \"Cybersécurité\", \"Fintech\".\nprojects: Extrait les noms de projets spécifiques, d'initiatives ou de programmes mentionnés.\nExemples : \"Projet Phoenix\", \"Refonte de la plateforme e-commerce\", \"Initiative 'Data for All'\".\ncertifications: Extrait les certifications officielles, diplômes ou formations reconnues.\nExemples : \"AWS Certified Solutions Architect\", \"PMP\", \"Google Analytics IQ\".\nlanguages: Extrait les langues parlées, en incluant le niveau si celui-ci est précisé.\nExemples : \"Anglais (courant)\", \"Espagnol (notions)\", \"Allemand\".\nmetrics: Extrait les indicateurs de performance chiffrés et les résultats quantifiables.\nExemples : \"Augmentation du CA de 20%\", \"Réduction des coûts de 15%\", \"Gestion d'un budget de 5M€\".\n\n# EXEMPLE\nabout_text:\n\"Manager expérimenté en stratégie Go-to-Market, je me spécialise dans la prise de décision basée sur les données. J'ai mené avec succès des projets complexes, notamment le lancement de l'initiative 'Data for All', qui a permis d'unifier nos sources de données. Ce projet, qui s'appuyait sur Salesforce et Tableau, a généré une croissance de 15% du MRR. Certifié PMP, mon leadership collaboratif et ma communication transparente sont mes principaux atouts. Je parle couramment anglais et j'ai de bonnes notions d'espagnol.\"\n\nJSON de sortie attendu:\n{\n  \"metadata\": {\n    \"hard_skills\": [\"Stratégie Go-to-Market\", \"Gestion de projet\", \"Analyse de données\"],\n    \"soft_skills\": [\"Leadership collaboratif\", \"Communication transparente\"],\n    \"technologies\": [\"Salesforce\", \"Tableau\"],\n    \"key_topics\": [\"Go-to-Market\", \"Data-driven decision making\"],\n    \"projects\": [\"Initiative 'Data for All'\"],\n    \"certifications\": [\"PMP\"],\n    \"languages\": [\"Anglais (courant)\", \"Espagnol (bonnes notions)\"],\n    \"metrics\": [\"Croissance de 15% du MRR\"]\n  }\n}"
+  },
+  {
+    "name": "chunk_hypothetical_questions",
+    "user": "system",
+    "prompt": "À partir du texte suivant, génère 3 questions pertinentes et distinctes auxquelles ce texte apporte une réponse claire. Ne renvoie QUE les questions, chacune sur une nouvelle ligne, sans numérotation ni préfixe.\n\nTEXTE:\n\"\"\"\n${text}\n\"\"\"\n\nQUESTIONS:"
+  },
+  {
+    "name": "agent_rerank",
+    "user": "system",
+    "prompt": "Vous êtes un assistant d'analyse de pertinence. Votre tâche est d'évaluer une liste de documents (chunks) par rapport à une QUESTION utilisateur et de leur attribuer un score de pertinence.\n\nVoici la QUESTION de l'utilisateur :\n\"{question}\"\n\nVoici les chunks de document à évaluer :\n{context}\n\n---\n# RÈGLES DE SCORING (CRITIQUE)\n\n1.  **PRIORITÉ AUX MÉTADONNÉES (Metadata First)** :\n    -   Analysez impérativement les champs `metadata` (ex: `dates`, `company`, `location`, `name`).\n    -   Si un élément de la question (ex: \"2016\") apparaît dans un champ de métadonnées (ex: `\"dates\": [2015, 2016]`), c'est une **CORRESPONDANCE PARFAITE**.\n    -   **ACTION : Attribuez un score de 1.0 immédiatement.**\n\n2.  **ANALYSE DU CONTENU** :\n    -   **Score 0.9 - 1.0 (Excellent)** : Le texte ou les métadonnées contiennent la réponse exacte (ex: l'année précise, le nom de l'entreprise).\n    -   **Score 0.6 - 0.8 (Bon)** : Le chunk parle du bon sujet ou couvre une période englobante (ex: question sur 2016, chunk parle de 2015-2017).\n    -   **Score 0.3 - 0.5 (Moyen)** : Le contexte est bon mais l'info précise est floue. À garder par sécurité.\n    -   **Score 0.0 - 0.2 (Hors Sujet)** : Rien à voir.\n\n3.  **INSTRUCTION DE SORTIE** :\n    -   Votre réponse DOIT être uniquement un bloc de code JSON valide contenant un tableau d'objets.\n    -   Clés obligatoires : `chunk_index`, `score`.\n\nEXEMPLE DE SORTIE ATTENDUE:\n```json\n[\n  { \"chunk_index\": 0, \"score\": 0.1 },\n  { \"chunk_index\": 1, \"score\": 1.0 }\n]\n```"
+  },
+  {
+    "name": "chunk_comments",
+    "user": "system",
+    "prompt": "# RÔLE ET OBJECTIF\n\nTu es un assistant expert en extraction de relations sémantiques. Ta mission est d'analyser un court commentaire texte (`user_comment`) et d'en extraire les entités factuelles clés (personnes, entreprises, lieux, objets, concepts, etc.) ainsi que leurs rôles.\nL'objectif est de structurer ces informations sous forme de paires clé-valeur dans un objet JSON. Contrairement à un schéma fixe, tu dois **déterminer sémantiquement les clés JSON** en fonction du rôle de l'entité dans le commentaire.\nCes métadonnées doivent permettre de répondre ultérieurement à des questions factuelles sur le contenu du commentaire (ex: \"Qui a fait quoi ?\", \"Où se trouve X ?\", \"Quel est le poste de Y ?\").\n\n# STRUCTURE DE SORTIE ATTENDUE\n\nLa sortie doit être un objet JSON unique. N'ajoute aucun commentaire ou texte en dehors de cet objet JSON.\n\n{\n  \"cle_semantique_1\": \"valeur_extraite_1\",\n  \"cle_semantique_2\": \"valeur_extraite_2\",\n  ...\n}\n\n# INSTRUCTIONS DÉTAILLÉES ET EXEMPLES\n\n1.  **Analyse Sémantique** : Lis le `user_comment` et identifie les entités principales.\n2.  **Création des Clés** : Pour chaque entité, crée une clé JSON qui décrit son *rôle* ou sa *nature*. Les clés doivent être concises, en français, en minuscules, et peuvent utiliser un underscore (`_`) si nécessaire (ex: `titre_livre`, `nom_entreprise`).\n3.  **Extraction des Valeurs** : La valeur associée à la clé doit être la chaîne de caractères exacte extraite du texte.\n4.  **Précision Absolue** : N'extraie que les informations **explicitement écrites**. N'invente, ne déduis, ni ne corrige aucune information.\n\n---\n\n**Exemple 1 (Objectif principal)**\n\n* `user_comment`: \"Maurice Dugommier a écrit 'Ralph et son orque'\"\n* `output`:\n    ```json\n    {\n      \"auteur\": \"Maurice Dugommier\",\n      \"livre\": \"Ralph et son orque\"\n    }\n    ```\n    *(Note : \"nom\" est aussi acceptable pour Maurice Dugommier\", mais \"auteur\" est sémantiquement plus riche dans ce contexte)*\n\n**Exemple 2 (Personne, Poste, Entreprise)**\n\n* `user_comment`: \"Marie Durand est la nouvelle CEO de TechSolutions.\"\n* `output`:\n    ```json\n    {\n      \"personne\": \"Marie Durand\",\n      \"poste\": \"CEO\",\n      \"entreprise\": \"TechSolutions\"\n    }\n    ```\n\n**Exemple 3 (Projet et Entreprise)**\n\n* `user_comment`: \"Discussion avec Acme Corp sur le projet Alpha à Lyon.\"\n* `output`:\n    ```json\n    {\n      \"entreprise\": \"Acme Corp\",\n      \"projet\": \"Alpha\",\n      \"ville\": \"Lyon\"\n    }\n    ```\n\n**Exemple 4 (Information simple)**\n\n* `user_comment`: \"Le rapport mentionne une croissance de 15% en 2024.\"\n* `output`:\n    ```json\n    {\n      \"sujet\": \"croissance\",\n      \"valeur\": \"15%\",\n      \"annee\": 2024\n    }\n    ```\n\n---\n\n# RÈGLES STRICTES\n\n1.  **NE PAS INVENTER** : Si une information n'est pas explicite ou si une relation n'est pas claire, ne l'inclus pas.\n2.  **FORMAT JSON VALIDE** : La sortie doit être **uniquement** un objet JSON valide, sans aucun texte avant ou après.\n3.  **CLÉS SÉMANTIQUES** : Choisis toujours la clé qui décrit le mieux le *rôle* de l'entité (ex: `auteur`, `entreprise`, `poste`, `ville`, `projet`, `sujet`, `date`, `montant`...).\n4.  **COMMENTAIRES TRIVIAUX** : Si le commentaire est trivial, subjectif, ou ne contient aucune entité factuelle claire (ex: \"Merci\", \"OK\", \"C'est une excellente idée\", \"Je suis d'accord\"), retourne un objet JSON vide `{}`."
+  },
+  {
+    "name": "agent_master_prompt",
+    "user": "system",
+    "prompt": "# RÔLE ET OBJECTIF\nTu es un assistant de recherche expert.\n\n# CONTEXTE\nTu as accès à une base de documents et un Graphe de Connaissances.\n\n# DIRECTIVES DES OUTILS\n\n1. **RELATIONS & STRUCTURE (Outil: \\`graph_search\\`)**\n   - SI la question porte sur des liens (\"Qui connait qui ?\", \"Hierarchie\", \"Filiales\"), tu DOIS utiliser \\`graph_search\\`.\n   - C'est la source prioritaire pour les faits structurels.\n\n2. **DÉNOMBREMENT (Outil: \\`entities_search\\`)**\n   - Pour lister ou compter des entités.\n\n3. **CONTENU & THEMES (Outil: \\`exploratory_search\\`)**\n   - Pour tout le reste (résumés, explications thématiques).\n\n# ÉTAPE FINALE : SYNTHÈSE DE LA RÉPONSE\n\n⚠️ RÈGLE CRITIQUE DE RÉPONSE :\nTu as le droit de répondre en utilisant DEUX sources valides :\n   A. L'observation de \\`graph_search\\` (Liste de relations).\n   B. L'observation de \\`rerank_chunks\\` (Extraits de textes).\n\n1. **Si tu as utilisé le Graphe :** Construis ta réponse directement à partir des relations trouvées. Pas besoin de chunks.\n2. **Si tu as utilisé la Recherche (Exploratory/Precise) :** Utilise les chunks fournis par \\`rerank_chunks\\`.\n\nNe jamais inventer. Cite tes sources."
+  },
+  {
+    "name": "chunk_entities",
+    "user": "system",
+    "prompt": "# RÔLE ET OBJECTIF\n\nExtrais les entités structurantes du texte pour construire un graphe de connaissances.\nNe te limite pas aux personnes.\n\nCatégories ciblées :\n1. **PEOPLE** : Personnes réelles nommées.\n2. **COMPANIES** : Entreprises, Organisations, Groupes (ex: Black Basta, Hyundai).\n3. **LOCATIONS** : Pays, Villes, Régions (ex: Russie, France).\n4. **TOOLS** : Logiciels, Plateformes, Outils techniques (ex: Qakbot, Plateforme de signalement).\n5. **CONCEPTS** : Termes clés métier, Réglementations, Types d'attaques (ex: Ransomware, CNIL, Phishing).\n\nLe texte :\n\"\"\"\n{text}\n\"\"\"\n\nRéponds UNIQUEMENT avec un objet JSON valide suivant cette structure :\n```json\n{\n  \"people\": [{ \"name\": \"...\" }],\n  \"companies\": [{ \"name\": \"...\" }],\n  \"locations\": [{ \"name\": \"...\" }],\n  \"tools\": [{ \"name\": \"...\" }],\n  \"concepts\": [{ \"name\": \"...\" }]\n}\n```"
+  },
+  {
+    "name": "file_parser",
+    "user": "system",
+    "prompt": "# RÔLE ET OBJECTIF\nTu es un assistant IA expert en analyse de documents professionnels. Ta mission est d'analyser un texte brut (`file_text`) et de le classifier dans l'une des trois catégories suivantes : 'profile' (CV), 'company' (description d'entreprise), ou 'post' (autre document, article, etc.).\n\n# INSTRUCTIONS\n1.  Analyse le texte pour identifier sa structure.\n2.  Si le texte est un CV, classifie-le comme `\"category\": \"profile\"` et extrais son contenu.\n3.  Si le texte est une description d'entreprise (plaquette, 'à propos', ...), classifie-le comme `\"category\": \"company\"` et extrais son contenu.\n4.  Sinon, classifie-le comme `\"category\": \"post\"`.\n\n# RÈGLES D'EXTRACTION (SI 'profile')\n-   `name`: Le nom complet du candidat.\n-   `headline`: Le titre de poste le plus récent.\n-   `about`: Le résumé de carrière.\n-   `experience`: Tableau d'objets (title, company, location, start_date, end_date, description).\n-   `education`: Tableau d'objets (title, degree, field).\n\n# RÈGLES D'EXTRACTION (SI 'company')\n-   `name`: Le nom complet de l'entreprise.\n-   `about`: La description 'À propos', 'Mission' ou 'Résumé'.\n-   `industries`: Le secteur d'activité (ex: \"Logiciel\").\n-   `company_size`: La taille (ex: \"1001-5000 employés\").\n-   `locations`: Le siège social ou les bureaux (ex: \"Paris, France\").\n-   `updates`: **[IMPORTANT]** Un tableau d'objets. Tente d'extraire les sections d'actualités, les 'projets clés', ou les annonces datées. Chaque objet doit avoir :\n    -   `date`: La date de l'annonce si trouvée (ex: \"juin 2024\"). Sinon, `null`.\n    -   `text`: Le texte complet de l'annonce ou de la section.\n    -   `likes_count`: 0 (par défaut pour les fichiers manuels).\n\n# STRUCTURE DE SORTIE FINALE\nLa sortie doit être **uniquement et exclusivement un objet JSON valide**.\n\n## EXEMPLE DE SORTIE (COMPANY)\n```json\n{\n  \"category\": \"company\",\n  \"pageContent\": {\n    \"name\": \"Tech Solutions Inc.\",\n    \"about\": \"Tech Solutions Inc. est un leader mondial...\",\n    \"industries\": \"Logiciels d'entreprise\",\n    \"company_size\": \"1001-5000 employés\",\n    \"locations\": \"Paris, France\",\n    \"updates\": [\n      {\n        \"date\": \"juin 2024\",\n        \"text\": \"Lancement de notre nouvelle plateforme 'Quantum'. Elle vise à révolutionner l'analyse de données...\",\n        \"likes_count\": 0\n      },\n      {\n        \"date\": null,\n        \"text\": \"Projet Clé 'Phoenix' : Nous avons finalisé le déploiement de notre infrastructure cloud...\",\n        \"likes_count\": 0\n      }\n    ]\n  }\n}\n```\n\n## EXEMPLE DE SORTIE (PROFILE)\n```json\n{\n  \"category\": \"profile\",\n  \"pageContent\": { ... } \n}\n```\n\n## EXEMPLE DE SORTIE (POST)\n```json\n{\n  \"category\": \"post\"\n}\n```",
+    "description": "OUTIL D'ANALYSE INITIALE. À utiliser EN PREMIER pour classifier le document (Profile/CV, Company, Post) et extraire la structure de base."
+  },
+  {
+    "name": "graph_extraction",
+    "user": "system",
+    "prompt": "Tu es un expert en Knowledge Graph. Ta mission est d'extraire des relations sémantiques précises du texte fourni.\n\nFormat de sortie JSON attendu :\n{\n  \"triplets\": [\n    {\n      \"source\": \"Nom Entité 1\",\n      \"source_type\": \"PERSON | COMPANY | CONCEPT | EVENT | TOOL | LOCATION\",\n      \"relation\": \"VERBE_EN_MAJUSCULE_ET_ANGLAIS\", \n      \"target\": \"Nom Entité 2\",\n      \"target_type\": \"PERSON | COMPANY | CONCEPT | EVENT | TOOL | LOCATION\",\n      \"description\": \"Court contexte (ex: 'Depuis 2020')\"\n    }\n  ]\n}\n\nRègles :\n1. Utilise des relations précises : ACQUIRED, SUED, PARTNERED_WITH, AUTHORED, ATTACKED_BY, CEO_OF, LOCATED_IN. Évite les relations vagues comme \"LINKED_TO\".\n2. Normalise les noms (ex: \"Microsoft Corp\" -> \"Microsoft\").\n3. Si le texte parle d'une attaque informatique, extrais : ATTACKER, VICTIM, METHOD, DATE.\n4. Extrais au maximum 15 triplets les plus pertinents.\n\nREGLE STRICTE: toujours répondre en français"
+  }
+]
+
+def seed_prompts():
+    print("🚀 Initialisation des Prompts (Seed)...")
+    
+    # S'assurer que la table existe
+    Base.metadata.create_all(bind=engine)
+    
+    count = 0
+    for p_data in RAW_PROMPTS_DATA:
+        try:
+            # On ignore l'ID Mongo (_id) s'il est présent, on laisse SQLite gérer
+            prompt_in = PromptCreate(
+                name=p_data["name"],
+                prompt=p_data["prompt"],
+                user=p_data["user"],
+                description=p_data.get("description")
+            )
+            prompt_repository.upsert_prompt(prompt_in)
+            count += 1
+            print(f"✅ Prompt traité : {p_data['name']}")
+        except Exception as e:
+            print(f"❌ Erreur sur {p_data.get('name')}: {e}")
+
+    print(f"\n🎉 Terminé ! {count} prompts sont maintenant en base SQLite.")
+
+if __name__ == "__main__":
+    seed_prompts()
+
+# ------------------------------------------
+# FICHIER : scripts\test_01_check_state.py
+# ------------------------------------------
+import sys
+import os
+import requests
+from sqlalchemy.orm import Session
+
+# Ajout du dossier parent au path pour les imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine, get_chroma_client
+from database.models import PromptModel, LoginModel, DocModel
+
+# Liste des prompts critiques pour que le RAG fonctionne
+REQUIRED_PROMPTS = ["synthesis_tags", "chunk_hypothetical_questions", "chunk_entities", "graph_extraction"]
+
+def check_system_state():
+    print("🔍 [DIAGNOSTIC] Vérification de l'état du système...\n")
+    
+    with Session(engine) as db:
+        # 1. Vérification des Prompts (CRITIQUE)
+        print("1️⃣  Vérification des Prompts...")
+        existing_prompts = [p.name for p in db.query(PromptModel).all()]
+        missing = [p for p in REQUIRED_PROMPTS if p not in existing_prompts]
+        
+        if missing:
+            print(f"   ❌ ALERTE : Il manque ces prompts critiques : {missing}")
+            print("      -> Lancez 'python scripts/seed_prompts.py' si vous les avez perdus.")
+        else:
+            print(f"   ✅ {len(existing_prompts)} prompts trouvés (dont les {len(REQUIRED_PROMPTS)} critiques).")
+
+        # 2. Vérification des Docs (Doit être vide ou presque)
+        count_docs = db.query(DocModel).count()
+        print(f"\n2️⃣  Vérification des Documents : {count_docs} documents en base SQLite.")
+
+    # 3. Vérification ChromaDB
+    print("\n3️⃣  Vérification ChromaDB (Vecteurs)...")
+    try:
+        client = get_chroma_client()
+        coll = client.get_or_create_collection("rag_chunks")
+        count_vectors = coll.count()
+        print(f"   ✅ Connexion Chroma OK. Contient {count_vectors} chunks.")
+    except Exception as e:
+        print(f"   ❌ ERREUR CHROMA : {e}")
+
+    print("\n🏁 Diagnostic terminé.")
+
+if __name__ == "__main__":
+    check_system_state()
+
+# ------------------------------------------
+# FICHIER : scripts\test_02_full_flow.py
+# ------------------------------------------
+import requests
+import time
+import sys
+import json
+
+# Configuration
+API_URL = "http://127.0.0.1:8000"
+TEST_USER = "admin_test"
+TEST_DOC_TEXT = "Le projet secret s'appelle 'Projet Omega'. Il vise à créer une IA quantique d'ici 2030."
+
+def run_test():
+    print(f"🚀 Démarrage du Test Fonctionnel sur {API_URL}...\n")
+
+    # ---------------------------------------------------------
+    # 1. INGESTION (On pousse la donnée)
+    # ---------------------------------------------------------
+    print("🔹 [ETAPE 1] Ingestion du document...")
+    try:
+        res = requests.post(f"{API_URL}/ingest/text", json={
+            "text": TEST_DOC_TEXT,
+            "tags": ["test", "secret"],
+            "employee": TEST_USER
+        })
+        if res.status_code != 200:
+            print(f"   ❌ Erreur API Ingest ({res.status_code}) : {res.text}")
+            return
+        
+        data = res.json()
+        print(f"   ✅ Ingestion OK. ID: {data.get('doc_id')} | Chunks créés: {data.get('chunks_count')}")
+        
+        if data.get('chunks_count') == 0:
+            print("   ⚠️  ATTENTION : 0 chunks créés ! Vérifiez 'services/chunking/manager.py'.")
+            return
+
+    except Exception as e:
+        print(f"   ❌ Exception critique : {e}")
+        return
+
+    print("   ⏳ Attente de 2 secondes pour l'indexation...")
+    time.sleep(2)
+
+    # ---------------------------------------------------------
+    # 2. VERIFICATION SEARCH (On vérifie la présence physique)
+    # ---------------------------------------------------------
+    print("\n🔹 [ETAPE 2] Vérification Vectorielle (Search)...")
+    try:
+        # On utilise la route /search que vous avez ajoutée dans api.py
+        res = requests.post(f"{API_URL}/search/", json={
+            "query": "Omega",
+            "limit": 3,
+            "employee": TEST_USER
+        })
+        
+        if res.status_code == 200:
+            results = res.json().get("results", [])
+            found = False
+            for r in results:
+                if "Omega" in r.get("content", ""):
+                    print(f"   ✅ Contenu retrouvé dans Chroma ! (Score: {r.get('score_distance')})")
+                    print(f"      Extrait : {r.get('content')[:50]}...")
+                    found = True
+                    break
+            
+            if not found:
+                print("   ❌ ECHEC : Le document n'est pas remonté par la recherche vectorielle.")
+                print(f"      Résultats bruts : {json.dumps(results, indent=2)}")
+                return
+        else:
+            print(f"   ❌ Erreur API Search ({res.status_code}) : {res.text}")
+            return
+
+    except Exception as e:
+        print(f"   ❌ Erreur lors du test Search : {e}")
+        return
+
+    # ---------------------------------------------------------
+    # 3. TEST CHAT (On teste l'intelligence)
+    # ---------------------------------------------------------
+    print("\n🔹 [ETAPE 3] Test du Chat (RAG)...")
+    question = "Quel est le nom du projet secret et son but ?"
+    try:
+        res = requests.post(f"{API_URL}/chat/", json={
+            "question": question,
+            "employee": TEST_USER
+        })
+        
+        if res.status_code == 200:
+            answer = res.json().get("answer", "")
+            sources = res.json().get("sources", [])
+            
+            print(f"   ❓ Question : {question}")
+            print(f"   🤖 Réponse  : {answer}\n")
+            
+            if "Omega" in answer:
+                print("   🎉 SUCCÈS TOTAL : Le système fonctionne de bout en bout !")
+            else:
+                print("   🔸 RESULTAT MITIGÉ : Le document est trouvé mais le LLM ne l'a pas utilisé.")
+                print("      -> Vérifiez le Prompt Système dans 'services/chat.py'.")
+        else:
+            print(f"   ❌ Erreur API Chat ({res.status_code}) : {res.text}")
+
+    except Exception as e:
+        print(f"   ❌ Erreur lors du test Chat : {e}")
+
+if __name__ == "__main__":
+    run_test()
+
+# ------------------------------------------
+# FICHIER : scripts\test_master.py
+# ------------------------------------------
+import requests
+import time
+import os
+import sys
+
+# Configuration
+API_URL = "http://127.0.0.1:8000"
+EMPLOYEE_ID = "admin_test_master"
+
+# Codes couleurs pour la lisibilité
+GREEN = "\033[92m"
+RED = "\033[91m"
+RESET = "\033[0m"
+
+def log(step, success, message):
+    icon = "✅" if success else "❌"
+    color = GREEN if success else RED
+    print(f"{color}{icon} [{step}] {message}{RESET}")
+    if not success:
+        print(f"{RED}   -> ARRÊT CRITIQUE : Corrigez cette étape avant de continuer.{RESET}")
+        sys.exit(1)
+
+def create_dummy_pdf():
+    filename = "test_doc.pdf"
+    with open(filename, "wb") as f:
+        f.write(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 50 >>\nstream\nBT /F1 12 Tf 72 720 Td (Ceci est un test PDF pour le RAG.) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000010 00000 n \n0000000060 00000 n \n0000000157 00000 n \n0000000296 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n400\n%%EOF")
+    return filename
+
+def run_tests():
+    print(f"\n🚀 DÉMARRAGE BATTERIE DE TESTS SUR {API_URL}\n")
+
+    # ---------------------------------------------------------
+    # 1. TEST CONNEXION (Healthcheck)
+    # ---------------------------------------------------------
+    try:
+        r = requests.get(f"{API_URL}/")
+        log("API", r.status_code == 200, f"API en ligne (Ping: {r.json().get('status')})")
+    except Exception as e:
+        log("API", False, f"Impossible de joindre l'API. Lancez 'python -m api.main'. Erreur: {e}")
+
+    # ---------------------------------------------------------
+    # 2. TEST INGESTION TEXTE (Route: POST /ingest/text)
+    # ---------------------------------------------------------
+    print("\n🔹 TEST 2 : Ingestion Texte")
+    payload_text = {
+        "text": "Le projet Apollo 11 a permis à l'homme de marcher sur la Lune en 1969.",
+        "tags": ["espace", "histoire"],
+        "employee": EMPLOYEE_ID
+    }
+    r = requests.post(f"{API_URL}/ingest/text", json=payload_text)
+    
+    if r.status_code == 200:
+        data = r.json()
+        log("INGEST_TEXT", True, f"Doc ID: {data.get('doc_id')} | Chunks: {data.get('chunks_count')}")
+    else:
+        log("INGEST_TEXT", False, f"Erreur {r.status_code}: {r.text}")
+
+    # ---------------------------------------------------------
+    # 3. TEST INGESTION URL (Route: POST /ingest/url)
+    # ---------------------------------------------------------
+    print("\n🔹 TEST 3 : Ingestion URL")
+    # URL Wikipédia simple pour éviter les blocages
+    payload_url = {
+        "url": "https://fr.wikipedia.org/wiki/Lune",
+        "tags": ["wiki", "espace"],
+        "employee": EMPLOYEE_ID
+    }
+    r = requests.post(f"{API_URL}/ingest/url", json=payload_url)
+
+    if r.status_code == 200:
+        data = r.json()
+        log("INGEST_URL", True, f"Doc ID: {data.get('doc_id')} | Chunks: {data.get('chunks_count')}")
+    else:
+        # On tolère l'échec si Tavily n'est pas configuré, mais on le signale
+        if "TAVILY_API_KEY" not in os.environ and "400" in str(r.status_code):
+             print(f"{RED}⚠️  Echec URL : Vérifiez votre TAVILY_API_KEY dans .env{RESET}")
+        else:
+            log("INGEST_URL", False, f"Erreur {r.status_code}: {r.text}")
+
+    # ---------------------------------------------------------
+    # 4. TEST INGESTION FICHIER (Route: POST /ingest/file)
+    # ---------------------------------------------------------
+    print("\n🔹 TEST 4 : Ingestion Fichier (Upload)")
+    pdf_name = create_dummy_pdf()
+    try:
+        with open(pdf_name, "rb") as f:
+            files = {"file": (pdf_name, f, "application/pdf")}
+            data = {"tags": "pdf,test", "employee": EMPLOYEE_ID}
+            r = requests.post(f"{API_URL}/ingest/file", files=files, data=data)
+        
+        if r.status_code == 200:
+            res_json = r.json()
+            log("INGEST_FILE", True, f"Doc ID: {res_json.get('doc_id')}")
+        else:
+            log("INGEST_FILE", False, f"Erreur {r.status_code}: {r.text}")
+    finally:
+        if os.path.exists(pdf_name):
+            os.remove(pdf_name)
+
+    print("⏳ Pause 2s pour indexation ChromaDB...")
+    time.sleep(2)
+
+    # ---------------------------------------------------------
+    # 5. TEST RECHERCHE (Route: POST /search/)
+    # ---------------------------------------------------------
+    print("\n🔹 TEST 5 : Recherche Vectorielle (Debug)")
+    payload_search = {
+        "query": "Apollo 11",
+        "limit": 3,
+        "employee": EMPLOYEE_ID
+    }
+    r = requests.post(f"{API_URL}/search/", json=payload_search)
+    
+    if r.status_code == 200:
+        results = r.json().get("results", [])
+        if results and len(results) > 0:
+            log("SEARCH", True, f"Trouvé : {results[0]['content'][:50]}... (Score: {results[0]['score_distance']})")
+        else:
+            log("SEARCH", False, "Aucun résultat trouvé (Indexation échouée ?)")
+    else:
+        log("SEARCH", False, f"Erreur {r.status_code}: {r.text}")
+
+    # ---------------------------------------------------------
+    # 6. TEST CHAT (Route: POST /chat/)
+    # ---------------------------------------------------------
+    print("\n🔹 TEST 6 : Chat RAG")
+    payload_chat = {
+        "question": "Quand l'homme a-t-il marché sur la Lune ?",
+        "employee": EMPLOYEE_ID
+    }
+    r = requests.post(f"{API_URL}/chat/", json=payload_chat)
+
+    if r.status_code == 200:
+        ans = r.json()
+        response_text = ans.get("answer", "")
+        sources = ans.get("sources", [])
+        print(f"   🤖 Réponse : {response_text}")
+        print(f"   📚 Sources : {sources}")
+        
+        if "1969" in response_text or "Apollo" in response_text:
+            log("CHAT", True, "Réponse cohérente avec le contexte.")
+        else:
+            print(f"{RED}⚠️  Réponse IA faible (Vérifiez le prompt ou le modèle Ollama).{RESET}")
+            # On ne bloque pas ici, car techniquement l'API a répondu
+    else:
+        log("CHAT", False, f"Erreur {r.status_code}: {r.text}")
+
+    print(f"\n{GREEN}🎉 BATTERIE DE TESTS TERMINÉE AVEC SUCCÈS !{RESET}")
+    print("Votre API Python fonctionne parfaitement.")
+
+if __name__ == "__main__":
+    run_tests()
+
+# ------------------------------------------
+# FICHIER : scripts\validate_chunking_profile.py
+# ------------------------------------------
+import sys
+import os
+import time
+import logging
+
+# Config logs
+logging.basicConfig(level=logging.INFO)
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine
+from database.models import Base
+from services.ingestion import ingestion_service
+from services.chat import chat_service
+
+def run_profile_test():
+    print("🚀 Démarrage Test Chunking (Profil Structuré)...")
+    Base.metadata.create_all(bind=engine)
+    
+    employee_id = "recruiter_bob"
+    
+    # 1. Donnée structurée (Comme si elle venait d'un scraping LinkedIn)
+    fake_profile = {
+        "name": "Alice Wonderland",
+        "about": "Experte en Data Science passionnée par les lapins blancs.",
+        "experience": [
+            {
+                "title": "Lead Data Scientist",
+                "company": "Wonder Corp",
+                "date_range": "2020 - Present",
+                "description": "Gestion de l'équipe IA, déploiement de modèles LLM."
+            },
+            {
+                "title": "Junior Analyst",
+                "company": "Rabbit Hole Inc",
+                "date_range": "2018 - 2020",
+                "description": "Analyse de données temporelles."
+            }
+        ],
+        "education": [
+            {
+                "school": "University of Hearts",
+                "degree": "Master in Magic"
+            }
+        ]
+    }
+
+    # 2. Ingestion (on passe le dict direct)
+    print("\n--- [1] Ingestion du Profil JSON ---")
+    result = ingestion_service.process_input(
+        input_data=fake_profile,
+        employee=employee_id,
+        tags=["candidat", "data"],
+        origin="api_push"
+    )
+    
+    print(f"✅ Ingestion terminée.")
+    print(f"   Stratégie utilisée : {result['strategy']}")
+    print(f"   Chunks créés : {result['chunks_count']}")
+    
+    # On attend 3 chunks logiques : 1 About + 2 Experiences + 1 Education = 4 chunks
+    # (Ou 3 si about est petit)
+    
+    time.sleep(1)
+
+    # 3. Chat (Vérification RAG)
+    print("\n--- [2] Question sur le CV ---")
+    # On pose une question précise sur une expérience
+    question = "Qu'a fait Alice chez Rabbit Hole Inc ?"
+    
+    answer = chat_service.chat(question, employee_id)
+    
+    print(f"🤖 Réponse IA :\n{answer['response']}")
+    print(f"📚 Sources : {answer['sources']}")
+
+if __name__ == "__main__":
+    run_profile_test()
+
+# ------------------------------------------
+# FICHIER : scripts\validate_enrichment.py
+# ------------------------------------------
+import sys
+import os
+import logging
+import json
+
+# Config logs
+logging.basicConfig(level=logging.INFO)
+
+# Ajout du dossier parent au path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# CORRECTION ICI : On importe engine et Base au lieu de init_db
+from database.connection import engine
+from database.models import Base
+from services.chunking.enrichment import enrichment_service
+
+def run_enrichment_test():
+    print("🚀 Démarrage Test Enrichissement LLM...")
+    
+    # CORRECTION ICI : Initialisation explicite via SQLAlchemy
+    Base.metadata.create_all(bind=engine)
+
+    # 1. Texte "About" type LinkedIn
+    about_text = """
+    Développeur Full Stack avec 5 ans d'expérience. 
+    Expert en Python, FastAPI et React. 
+    J'ai géré des projets cloud sur AWS et Azure. 
+    Je suis reconnu pour ma capacité à résoudre des problèmes complexes et mon esprit d'équipe.
+    Certifié AWS Solutions Architect.
+    """
+
+    print(f"\n--- Texte à analyser ---\n{about_text.strip()}\n")
+
+    # 2. Appel du service (utilise le prompt 'chunk_about' en base)
+    try:
+        print("⏳ Appel au LLM (Ollama) via EnrichmentService...")
+        metadata = enrichment_service.extract_metadata(about_text, "chunk_about")
+        
+        print("\n✅ Résultat Structuré (JSON) :")
+        print("-" * 30)
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        print("-" * 30)
+
+        # Vérifications
+        if metadata and ("hard_skills" in metadata or "technologies" in metadata):
+            print("🎉 SUCCÈS : Des compétences ont été extraites !")
+        else:
+            print("⚠️ AVERTISSEMENT : Le JSON est valide mais vide. Vérifiez que le prompt 'chunk_about' est bien en base (seed_prompts.py).")
+
+    except Exception as e:
+        print(f"❌ ERREUR : {e}")
+
+if __name__ == "__main__":
+    run_enrichment_test()
+
+# ------------------------------------------
+# FICHIER : scripts\validate_ingest_file.py
+# ------------------------------------------
+import sys
+import os
+import time
+from dotenv import load_dotenv
+from fpdf import FPDF # Pour générer un PDF de test rapidement
+
+# pip install fpdf (juste pour ce script de test) ou créez un fichier manuellement
+
+load_dotenv()
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine
+from database.models import Base
+from services.ingestion import ingestion_service
+from services.chat import chat_service
+
+def create_dummy_pdf(filename):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="RAPPORT CONFIDENTIEL - PROJET ORION", ln=1, align="C")
+    pdf.cell(200, 10, txt="1. Le budget alloué est de 50 millions d'euros.", ln=2)
+    pdf.cell(200, 10, txt="2. Le directeur du projet est M. Vector.", ln=3)
+    pdf.output(filename)
+    print(f"📄 PDF de test généré : {filename}")
+
+def run_file_test():
+    print("🚀 Démarrage Test Ingestion FICHIER (PDF)...")
+    Base.metadata.create_all(bind=engine)
+    employee_id = "file_tester"
+    
+    # 1. Génération d'un fichier PDF local
+    pdf_path = "test_projet_orion.pdf"
+    try:
+        create_dummy_pdf(pdf_path)
+    except ImportError:
+        print("⚠️ 'fpdf' manquant. Installez-le (pip install fpdf) ou créez 'test_projet_orion.pdf' manuellement.")
+        return
+
+    # 2. Ingestion
+    print(f"\n--- [1] Ingestion du fichier : {pdf_path} ---")
+    try:
+        # On passe le CHEMIN du fichier
+        result = ingestion_service.process_input(
+            input_data=pdf_path,
+            employee=employee_id,
+            tags=["projet", "finance"],
+            origin="filesystem"
+        )
+        print(f"✅ Ingestion Fichier réussie !")
+        print(f"   Source détectée : {result['source']}")
+        print(f"   Doc ID : {result['doc_id']}")
+    except Exception as e:
+        print(f"❌ Erreur : {e}")
+        return
+
+    # Pause Indexation
+    time.sleep(1)
+
+    # 3. Chat
+    print("\n--- [2] Vérification RAG sur le PDF ---")
+    question = "Quel est le budget du projet Orion et qui est le directeur ?"
+    
+    answer = chat_service.chat(question, employee_id)
+    
+    print(f"🤖 Réponse IA :\n{answer['response']}")
+    print(f"📚 Sources : {answer['sources']}")
+
+    # Nettoyage
+    if os.path.exists(pdf_path):
+        os.remove(pdf_path)
+
+if __name__ == "__main__":
+    run_file_test()
+
+# ------------------------------------------
+# FICHIER : scripts\validate_ingest_url.py
+# ------------------------------------------
+import sys
+import os
+import time
+import logging # <--- Import nécessaire
+
+# Configuration des logs pour voir ce que dit Tavily
+logging.basicConfig(level=logging.INFO)
+
+# Ajout du dossier parent au path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine
+from database.models import Base
+from services.ingestion import ingestion_service
+from services.chat import chat_service
+
+def run_url_test():
+    print("🚀 Démarrage Test Ingestion URL (Tavily)...")
+    
+    # Init DB
+    Base.metadata.create_all(bind=engine)
+
+    employee_id = "web_tester"
+    
+    # URL de test : On utilise Wikipédia pour valider la connexion API (plus fiable que TDS)
+    target_url = "https://fr.wikipedia.org/wiki/Intelligence_artificielle" 
+
+    print(f"\n--- [1] Tentative d'ingestion de : {target_url} ---")
+    try:
+        # On appelle la nouvelle méthode unifiée 'process_input'
+        result = ingestion_service.process_input(
+            input_data=target_url,
+            employee=employee_id,
+            tags=["ia", "wiki", "web"],
+            origin="test_script"
+        )
+        print(f"✅ Ingestion Web réussie !")
+        print(f"   Source : {result['source']}")
+        print(f"   Chunks : {result['chunks_count']}")
+        
+    except Exception as e:
+        print(f"❌ Erreur critique : {e}")
+        # On ne quitte pas, on veut voir les logs au dessus
+        return
+
+    # Pause pour l'indexation Chroma
+    time.sleep(2)
+
+    print("\n--- [2] Vérification RAG sur le contenu Web ---")
+    question = "C'est quoi l'intelligence artificielle ?"
+    
+    answer = chat_service.chat(question, employee_id)
+    
+    print(f"🤖 Réponse IA :\n{answer['response']}")
+    print(f"📚 Sources : {answer['sources']}")
+
+if __name__ == "__main__":
+    run_url_test()
+
+# ------------------------------------------
+# FICHIER : scripts\validate_step1.py
+# ------------------------------------------
+import sys
+import os
+
+# Ajout du dossier parent au path pour les imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine, get_db
+from database.models import Base, LoginModel, DocModel
+from schemas.user import LoginCreate, LoginResponse
+from schemas.doc import DocCreate
+
+def run_validation():
+    print("🚀 Démarrage de la validation Étape 1 (Database & Schemas)...")
+
+    # 1. Création des Tables (Test des Models)
+    print("\n--- [1] Initialisation SQLite ---")
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("✅ Tables créées avec succès (logins, docs, api_logs).")
+    except Exception as e:
+        print(f"❌ Erreur création tables: {e}")
+        return
+
+    # 2. Insertion de données (Test Session + Models)
+    print("\n--- [2] Test Insertion SQL ---")
+    db = next(get_db())
+    
+    # Nettoyage préventif
+    db.query(LoginModel).filter(LoginModel.employee == "test_dev").delete()
+    db.commit()
+
+    try:
+        new_user = LoginModel(
+            employee="cv@duhamel.xyz",
+            company="Local Corp",
+            lastname="Dev",
+            firstname="Junior",
+            password="admin1",
+            services={"graph_rag": True}
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        print(f"✅ User inséré en DB: ID={new_user.id}, Services={new_user.services}")
+    except Exception as e:
+        print(f"❌ Erreur insertion SQL: {e}")
+        return
+
+    # 3. Validation Pydantic (Test Schemas -> Model -> Schema)
+    print("\n--- [3] Test Validation Pydantic ---")
+    try:
+        # Conversion Model SQL -> Schema Pydantic
+        user_schema = LoginResponse.model_validate(new_user)
+        print(f"✅ Conversion SQL->Pydantic réussie: {user_schema.employee} (Pass masqué)")
+        
+        # Test Doc Schema
+        doc_data = DocCreate(
+            doc="https://linkedin.com/in/test",
+            category="profile",
+            source="linkedin",
+            origin="extension",
+            tags=["test"],
+            employee="test_dev",
+            job_id="job_123",
+            page_content={"name": "Test Profile", "skills": ["Python"]}
+        )
+        print(f"✅ Schema Doc valide: {doc_data.doc}")
+        
+    except Exception as e:
+        print(f"❌ Erreur validation Pydantic: {e}")
+        return
+
+    print("\n🎉 ÉTAPE 1 TERMINÉE AVEC SUCCÈS : Structure propre et modulaire validée.")
+
+if __name__ == "__main__":
+    run_validation()
+
+# ------------------------------------------
+# FICHIER : scripts\validate_step2.py
+# ------------------------------------------
+import sys
+import os
+
+# Path hack pour les imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine
+from database.models import Base
+from schemas.user import LoginCreate
+from schemas.doc import DocCreate, Chunk as ChunkSchema
+from repositories.user import user_repository
+from repositories.doc import doc_repository
+from repositories.chunk import chunk_repository
+
+def run_validation():
+    print("🚀 Démarrage Validation Étape 2 (Repositories)...")
+
+    # 1. Reset DB
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    print("✅ DB Reset OK.")
+
+    # 2. Création User
+    print("\n--- [User Repo] ---")
+    user = user_repository.create_user(LoginCreate(
+        employee="jean.dupont@local.fr",
+        company="MyLocalCorp",
+        lastname="Dupont",
+        firstname="Jean",
+        password="secret_pass",
+        credit=100
+    ))
+    print(f"✅ User créé: {user.firstname} {user.lastname}")
+
+    # 3. Création Doc (Métadonnées)
+    print("\n--- [Doc Repo] ---")
+    doc_data = DocCreate(
+        doc="https://fr.wikipedia.org/wiki/Python_(langage)",
+        category="wiki",
+        source="web",
+        origin="import",
+        tags=["tech", "python"],
+        employee="jean.dupont@local.fr",
+        job_id="job_1",
+        page_content={"title": "Python Langage", "summary": "Langage de programmation interprété."}
+    )
+    doc = doc_repository.upsert_doc(doc_data)
+    print(f"✅ Doc inséré (SQLite): {doc.doc} (Status: {doc.status})")
+
+    # 4. Ajout Chunks (Vecteurs)
+    print("\n--- [Chunk Repo] ---")
+    chunks = [
+        ChunkSchema(
+            content="Python est un langage de programmation interprété, multi-paradigme et multiplateformes.",
+            metadata={"type": "intro", "page": 1}
+        ),
+        ChunkSchema(
+            content="Il favorise la programmation impérative structurée, fonctionnelle et orientée objet.",
+            metadata={"type": "details", "page": 1}
+        )
+    ]
+    chunk_repository.add_chunks(doc.doc, doc.employee, chunks)
+    
+    # 5. Test Recherche
+    print("\n--- [Search Test] ---")
+    results = chunk_repository.search("programmation objet", "jean.dupont@local.fr", limit=1)
+    
+    if results['documents'] and len(results['documents'][0]) > 0:
+        found_text = results['documents'][0][0]
+        print(f"✅ Recherche Sémantique OK.\n   Question: 'programmation objet'\n   Trouvé: '{found_text}'")
+    else:
+        print("❌ Echec de la recherche sémantique.")
+
+if __name__ == "__main__":
+    run_validation()
+
+# ------------------------------------------
+# FICHIER : scripts\validate_step3.py
+# ------------------------------------------
+import sys
+import os
+import time
+
+# Path hack
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine
+from database.models import Base
+from services.ingestion import ingestion_service
+from services.chat import chat_service
+from repositories.doc import doc_repository
+
+def run_validation():
+    print("🚀 Démarrage Validation Étape 3 (Services)...")
+    
+    # 1. Initialisation de la DB (Correction ici : on utilise engine direct)
+    Base.metadata.create_all(bind=engine)
+    print("✅ DB Initialisée.")
+
+    employee_id = "tester@local.com"
+    doc_name = "procedure_securite.txt"
+    
+    # 2. Texte de test (Contenu métier)
+    content = """
+    PROCÉDURE DE SÉCURITÉ - CODE ROUGE
+    1. En cas d'incendie, ne prenez pas l'ascenseur.
+    2. Le point de rassemblement est le Parking Sud, Zone B.
+    3. Le code du coffre-fort des serveurs est 'K9-Alpha-77'.
+    4. Le responsable de la sécurité est Mme Martin (poste 404).
+    """
+
+    # 3. Test Ingestion
+    print(f"\n--- [1] Ingestion du document : {doc_name} ---")
+    try:
+        result = ingestion_service.process_text_document(
+            doc_id=doc_name,
+            text_content=content,
+            employee=employee_id,
+            tags=["sécurité", "interne"],
+            origin="upload"
+        )
+        print(f"✅ Ingestion terminée. Chunks créés : {result['chunks_count']}")
+    except Exception as e:
+        print(f"❌ Erreur Ingestion: {e}")
+        return
+    
+    # Vérification du statut en base
+    doc_in_db = doc_repository.get_doc(doc_name, employee_id)
+    if doc_in_db:
+        print(f"   Statut en DB : {doc_in_db.status}")
+    else:
+        print("❌ Erreur: Document non trouvé en base SQLite après ingestion.")
+
+    # Petite pause pour laisser Chroma indexer
+    time.sleep(1)
+
+    # 4. Test Chat (RAG)
+    print("\n--- [2] Test du Chat RAG ---")
+    question = "Quel est le code du coffre et où est le point de rassemblement ?"
+    print(f"❓ Question : {question}")
+    
+    try:
+        chat_result = chat_service.chat(question, employee_id)
+        
+        print("\n🤖 Réponse de l'IA :")
+        print("-" * 40)
+        print(chat_result['response'])
+        print("-" * 40)
+        print(f"📚 Sources utilisées : {chat_result['sources']}")
+
+        # Validation simple du contenu
+        if "K9-Alpha-77" in chat_result['response'] or "Parking Sud" in chat_result['response']:
+            print("\n🎉 ÉTAPE 3 VALIDÉE : Le RAG complet fonctionne !")
+        else:
+            print("\n⚠️ ATTENTION : L'IA n'a pas donné la réponse attendue. Vérifiez que Ollama tourne bien.")
+            
+    except Exception as e:
+        print(f"❌ Erreur Chat: {e}")
+
+if __name__ == "__main__":
+    run_validation()
+
+# ------------------------------------------
+# FICHIER : scripts\verify_chunking_parity.py
+# ------------------------------------------
+import sys
+import os
+import time
+import logging
+
+logging.basicConfig(level=logging.INFO)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine
+from database.models import Base
+from services.ingestion import ingestion_service
+from repositories.doc import doc_repository
+from repositories.chunk import chunk_repository
+
+def verify_parity():
+    print("🚀 Démarrage Vérification Parité Node.js -> Python...")
+    Base.metadata.create_all(bind=engine)
+    
+    employee_id = "parity_checker"
+
+    # CAS 1 : Test du Post LinkedIn (Doit utiliser PostStrategy)
+    post_text = """
+    J'ai le plaisir d'annoncer que je rejoins OpenAI en tant que Lead Researcher.
+    Après 5 ans chez Google DeepMind, c'est une nouvelle aventure qui commence !
+    #AI #Career #NewJob
+    """
+    
+    print("\n--- [1] Ingestion d'un Post LinkedIn ---")
+    res_post = ingestion_service.process_input(
+        input_data={"post_text": post_text}, # Format dict pour simuler structure
+        employee=employee_id,
+        tags=["news"],
+        origin="linkedin_import"
+    )
+    
+    # On force la catégorie 'post' car process_input détecte 'raw' par défaut pour les dicts
+    # Note: Dans une vraie app, le routeur de catégorie ferait ce travail.
+    # Ici, pour le test, on va vérifier si le 'synthesis' a fonctionné.
+
+    # Vérification Synthèse
+    doc_db = doc_repository.get_doc(res_post['doc_id'], employee_id)
+    print(f"📄 Doc sauvegardé : {doc_db.doc}")
+    print(f"   Synthèse générée : {doc_db.synthesis[:100]}...") # Doit ne pas être vide
+    print(f"   Tags suggérés : {doc_db.suggested_tags}")
+
+    if doc_db.synthesis:
+        print("✅ SUCCÈS : La synthèse automatique (synthesis_tags) fonctionne !")
+    else:
+        print("❌ ÉCHEC : Pas de synthèse générée.")
+
+    # CAS 2 : Vérification des métadonnées du Chunk
+    # On cherche les chunks de ce doc
+    chunks = chunk_repository.search("OpenAI", employee_id)
+    if chunks and chunks['metadatas'] and len(chunks['metadatas'][0]) > 0:
+        meta = chunks['metadatas'][0][0]
+        # On vérifie si PostStrategy a bien tourné (elle ajoute le type 'post')
+        print(f"📦 Metadata du Chunk : {meta}")
+        if meta.get("type") == "post":
+            print("✅ SUCCÈS : PostStrategy utilisée correctement.")
+        else:
+            print(f"⚠️ ATTENTION : Type de chunk inattendu ({meta.get('type')}).")
+
+if __name__ == "__main__":
+    verify_parity()
+
+# ------------------------------------------
+# FICHIER : scripts\verify_entities.py
+# ------------------------------------------
+import sys
+import os
+import logging
+import json
+
+logging.basicConfig(level=logging.INFO)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine
+from database.models import Base
+from services.ingestion import ingestion_service
+from repositories.chunk import chunk_repository
+
+def run_entity_test():
+    print("🚀 Test: Extraction d'Entités (NER)...")
+    Base.metadata.create_all(bind=engine)
+    
+    # Texte riche en entités
+    text = """
+    Hier, Satya Nadella, le CEO de Microsoft, a annoncé un partenariat avec Mistral AI.
+    L'accord a été signé à Paris en présence de Brad Smith.
+    Ils vont intégrer leurs modèles dans Azure AI Studio pour concurrencer Google.
+    """
+    
+    doc_id = "test_ner_microsoft"
+    employee_id = "tester_ner"
+
+    print(f"\n--- Texte ---\n{text.strip()}\n")
+
+    # Ingestion
+    ingestion_service.process_input(
+        input_data=text,
+        employee=employee_id,
+        tags=["tech", "ia"],
+        origin="test_ner"
+    )
+
+    # Vérification
+    print("\n🔍 Vérification des métadonnées du chunk...")
+    results = chunk_repository.search("Microsoft", employee_id, limit=1)
+    
+    if results['metadatas'] and len(results['metadatas'][0]) > 0:
+        meta = results['metadatas'][0][0]
+        
+        print("\n📊 Métadonnées trouvées :")
+        print(json.dumps(meta, indent=2))
+        
+        # Tests
+        has_people = "Satya Nadella" in meta.get("entities_people", "")
+        has_company = "Microsoft" in meta.get("entities_companies", "")
+        has_location = "Paris" in meta.get("entities_locations", "")
+
+        if has_people and has_company:
+            print("\n✅ SUCCÈS : Entités 'Satya Nadella' et 'Microsoft' détectées !")
+        else:
+            print("\n⚠️ AVERTISSEMENT : Certaines entités manquent.")
+    else:
+        print("❌ Erreur : Chunk introuvable.")
+
+if __name__ == "__main__":
+    run_entity_test()
+
+# ------------------------------------------
+# FICHIER : scripts\verify_hypothetical.py
+# ------------------------------------------
+import sys
+import os
+import logging
+
+logging.basicConfig(level=logging.INFO)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import engine
+from database.models import Base
+from services.ingestion import ingestion_service
+from repositories.chunk import chunk_repository
+
+def run_test():
+    print("🚀 Test: Chunking avec Questions Hypothétiques...")
+    Base.metadata.create_all(bind=engine)
+    
+    # Texte court mais factuel, propice aux questions
+    text = """
+    La tour Eiffel est une tour de fer puddlé de 330 m de hauteur située à Paris.
+    Construite par Gustave Eiffel pour l'Exposition universelle de Paris de 1889.
+    Elle a accueilli plus de 300 millions de visiteurs depuis son ouverture.
+    """
+    
+    doc_id = "test_eiffel_questions"
+    employee_id = "tester_hyde"
+
+    # Ingestion
+    ingestion_service.process_input(
+        input_data=text,
+        employee=employee_id,
+        tags=["monument", "paris"],
+        origin="test_script"
+    )
+
+    # Vérification
+    print("\n🔍 Vérification du contenu du chunk...")
+    # On récupère le dernier chunk inséré pour ce doc
+    results = chunk_repository.search("tour eiffel", employee_id, limit=1)
+    
+    if results['documents'] and results['documents'][0]:
+        content = results['documents'][0][0]
+        print("-" * 40)
+        print(content)
+        print("-" * 40)
+        
+        if "--- Questions Potentielles ---" in content:
+            print("✅ SUCCÈS : Les questions ont été générées et ajoutées !")
+        else:
+            print("❌ ÉCHEC : Pas de questions trouvées dans le texte.")
+    else:
+        print("❌ Erreur : Chunk introuvable.")
+
+if __name__ == "__main__":
+    run_test()

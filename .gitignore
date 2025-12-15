@@ -1,0 +1,24 @@
+# Python standard
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environnements virtuels (très important)
+venv/
+.venv/
+env/
+
+# Variables d'environnement et Clés API (CRITIQUE)
+.env
+.env.local
+
+# IDE settings
+.vscode/
+.idea/
+
+# Base de données locales (si vous utilisez SQLite)
+*.db
+*.sqlite3
+
+# Logs
+*.log

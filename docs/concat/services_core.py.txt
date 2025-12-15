@@ -1,0 +1,313 @@
+# ==========================================
+# GROUPE : services_core
+# ==========================================
+
+
+# ------------------------------------------
+# FICHIER : services\__init__.py
+# ------------------------------------------
+
+
+# ------------------------------------------
+# FICHIER : services\chat.py
+# ------------------------------------------
+import logging
+from repositories.chunk import chunk_repository
+from services.llm import llm_service
+from schemas.chat import ChatRequestLegacy
+
+logger = logging.getLogger(__name__)
+
+class ChatService:
+    def chat(self, question: str, employee: str, tags: list[str] = None):
+        """
+        Pipeline RAG complet :
+        1. Recherche les chunks pertinents
+        2. Construit le contexte
+        3. Interroge le LLM
+        """
+        logger.info(f"💬 [Chat] Question: '{question}' (User: {employee})")
+
+        # 1. Retrieval (On augmente la limite à 7 pour avoir plus de contexte)
+        results = chunk_repository.search(question, employee, limit=7)
+        
+        retrieved_texts = []
+        sources = []
+
+        if results['documents']:
+            for i, doc_text in enumerate(results['documents'][0]):
+                retrieved_texts.append(doc_text)
+                meta = results['metadatas'][0][i]
+                sources.append(meta.get('doc', 'unknown'))
+
+        # 2. Construction du Contexte
+        context_block = "\n\n---\n\n".join(retrieved_texts)
+        
+        # --- DEBUG : On affiche ce qu'on envoie vraiment au LLM ---
+        print(f"\n📝 [DEBUG CONTEXTE] Taille: {len(context_block)} chars")
+        # print(f"{context_block[:500]}...") # Décommentez pour voir le début du texte
+        # ----------------------------------------------------------
+
+        if not context_block:
+            logger.warning("⚠️ [Chat] Aucun contexte trouvé.")
+            return {
+                "response": "Je n'ai trouvé aucun document correspondant dans la base de connaissances.",
+                "sources": []
+            }
+
+        # 3. Génération (Prompt Adouci)
+        # On enlève les contraintes "EXCLUSIVEMENT" trop fortes pour les petits modèles
+        system_prompt = """
+        Tu es un assistant intelligent de l'entreprise.
+        Ton objectif est de répondre à la question de l'utilisateur en t'aidant des informations de CONTEXTE fournies ci-dessous.
+        
+        Consignes :
+        - Si la réponse est dans le contexte, donne-la clairement.
+        - Si le contexte aide mais ne donne pas tout, fais de ton mieux.
+        - Si tu ne trouves rien du tout dans le contexte, dis-le poliment.
+        - Réponds toujours en Français.
+        """
+
+        answer = llm_service.generate_response(
+            system_prompt=system_prompt,
+            user_input=question,
+            context=context_block
+        )
+
+        return {
+            "response": answer,
+            "sources": list(set(sources)) # Deduplicate sources
+        }
+    
+    def handle_legacy_chat(self, request: ChatRequestLegacy) -> dict:
+        """
+        Gère le flux de chat compatible Node.js.
+        Pour l'instant : Mock + Logs des filtres d'exclusion.
+        """
+        logger.info(f"💬 [Legacy Chat] Question: '{request.question}' (User: {request.employee})")
+        
+        # 1. Log des filtres pour validation
+        if request.exclude:
+            logger.warning("*********************************************")
+            logger.warning(f"🚫 [Legacy Chat] Exclude Filter received: {request.exclude}")
+        
+        # 2. Logique Mock (En attendant le branchement RAG complet avec filtres)
+        # On simule une réponse pour que le frontend affiche la bulle
+        mock_response = (
+            f"🤖 [Python Backend] Message reçu !\n\n"
+            f"Question: {request.question}\n"
+            f"Filtres exclusion: {'Oui' if request.exclude else 'Non'}\n"
+            f"Tags: {request.tags}"
+        )
+
+        return {
+            "response": mock_response,
+            "sources": ["System Python"] 
+        }
+
+chat_service = ChatService()
+
+# ------------------------------------------
+# FICHIER : services\ingestion.py
+# ------------------------------------------
+import os
+import logging
+import json
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime
+
+from schemas.doc import DocCreate
+from repositories.doc import doc_repository
+from repositories.chunk import chunk_repository
+from repositories.tavily import tavily_repository
+from utils.text_extractor import text_extractor
+from services.chunking.manager import chunking_manager
+from services.chunking.enrichment import enrichment_service
+
+logger = logging.getLogger(__name__)
+
+class IngestionService:
+    
+    def _fallback_scrape(self, url: str) -> str:
+        """
+        Plan B : Scraping classique si l'API Tavily échoue.
+        """
+        logger.info(f"🛡️ [Fallback] Tentative de scraping standard pour : {url}")
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # On essaie de récupérer le texte principal
+            # On vire les scripts et styles
+            for script in soup(["script", "style", "nav", "footer"]):
+                script.decompose()
+                
+            text = soup.get_text(separator="\n")
+            
+            # Nettoyage basique des lignes vides
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            clean_text = '\n'.join(chunk for chunk in chunks if chunk)
+            
+            if len(clean_text) < 50:
+                return ""
+                
+            return clean_text
+            
+        except Exception as e:
+            logger.error(f"❌ [Fallback] Echec aussi : {e}")
+            return ""
+
+    def process_input(self, input_data: str | dict, employee: str, tags: list[str], origin: str = "manual"):
+        doc_name = "Document sans titre"
+        content_data = "" 
+        source_type = "manual"
+        category = "document"
+
+        if isinstance(input_data, str) and (input_data.startswith("http://") or input_data.startswith("https://")):
+            logger.info(f"🔗 URL détectée : {input_data}")
+            source_type = "web"
+            category = "website"
+            doc_name = input_data
+            
+            # [cite_start]1. Tentative Tavily [cite: 117]
+            content_data = tavily_repository.extract_content(input_data)
+            
+            # 2. Tentative Fallback si vide
+            if not content_data:
+                logger.warning(f"⚠️ Tavily n'a rien renvoyé pour {input_data}. Passage au Fallback.")
+                content_data = self._fallback_scrape(input_data)
+
+            if not content_data:
+                raise Exception(f"Contenu vide pour l'URL (Protection anti-bot ou erreur) : {input_data}")
+
+        elif isinstance(input_data, str) and os.path.exists(input_data) and os.path.isfile(input_data):
+            logger.info(f"📁 Fichier local détecté : {input_data}")
+            source_type = "file"
+            doc_name = os.path.basename(input_data)
+            
+            if input_data.endswith(".json"):
+                with open(input_data, 'r', encoding='utf-8') as f:
+                    content_data = json.load(f)
+                category = "profile"
+            else:
+                content_data = text_extractor.extract_from_file(input_data)
+                category = "document"
+
+        else:
+            logger.info("📦 Donnée brute détectée")
+            source_type = "raw"
+            
+            if isinstance(input_data, dict):
+                content_data = input_data
+                if "post_text" in input_data or "text" in input_data:
+                    category = "post"
+                    doc_name = f"post_{int(datetime.now().timestamp())}"
+                else:
+                    category = "profile"
+                    doc_name = f"profile_{input_data.get('name', 'unknown')}"
+            else:
+                doc_name = f"text_{int(datetime.now().timestamp())}.txt"
+                content_data = input_data
+
+        return self._process_content(doc_name, content_data, category, employee, tags, origin, source_type)
+
+    def _process_content(self, doc_id: str, content_data: any, category: str, employee: str, tags: list[str], origin: str, source: str):
+        job_id = f"job_{int(datetime.now().timestamp())}"
+        
+        preview_text = str(content_data)[:3000]
+        synthesis_data = {}
+        
+        try:
+            logger.info(f"🧠 [Ingestion] Generating synthesis for {doc_id}...")
+            synthesis_input = f"Doc: {doc_id}\nContent: {preview_text}"
+            synthesis_data = enrichment_service.extract_metadata(synthesis_input, "synthesis_tags")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to generate synthesis: {e}")
+
+        doc_synthesis = synthesis_data.get("synthesis", "")
+        doc_suggested_tags = synthesis_data.get("suggested_tags", [])
+
+        page_content_storage = content_data if isinstance(content_data, dict) else {"text": content_data}
+
+        doc_data = DocCreate(
+            doc=doc_id,
+            category=category,
+            source=source,
+            origin=origin,
+            tags=tags,
+            status="Processing",
+            employee=employee,
+            job_id=job_id,
+            page_content=page_content_storage,
+            synthesis=doc_synthesis,
+            suggested_tags=doc_suggested_tags
+        )
+        doc_repository.upsert_doc(doc_data)
+
+        try:
+            chunks_to_save = chunking_manager.chunk_data(doc_id, content_data, category, tags)
+
+            if not chunks_to_save:
+                logger.warning(f"⚠️ Aucun chunk généré pour {doc_id}")
+
+            chunk_repository.add_chunks(doc_id, employee, chunks_to_save)
+
+            doc_repository.update_status(doc_id, employee, "Done")
+            logger.info(f"✅ [Ingestion] Success. {len(chunks_to_save)} chunks created via strategy.")
+            
+            return {
+                "status": "success", 
+                "doc_id": doc_id,
+                "chunks_count": len(chunks_to_save),
+                "strategy": category
+            }
+
+        except Exception as e:
+            logger.error(f"❌ [Ingestion] Error: {e}")
+            doc_repository.update_status(doc_id, employee, "Failed")
+            raise e
+
+ingestion_service = IngestionService()
+
+# ------------------------------------------
+# FICHIER : services\llm.py
+# ------------------------------------------
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+class LLMService:
+    def __init__(self, model_name: str = "llama3.2"):
+        self.model_name = model_name
+        self.llm = ChatOllama(model=model_name, temperature=0)
+
+    def generate_response(self, system_prompt: str, user_input: str, context: str = "") -> str:
+        """
+        Génère une réponse simple basée sur un prompt système et une entrée utilisateur.
+        """
+        prompt = ChatPromptTemplate.from_template("""
+        {system_instruction}
+        
+        CONTEXTE (Si fourni) :
+        {context}
+        
+        QUESTION : {input}
+        """)
+
+        chain = prompt | self.llm | StrOutputParser()
+        
+        return chain.invoke({
+            "system_instruction": system_prompt,
+            "context": context,
+            "input": user_input
+        })
+
+# Instance par défaut (facile à importer)
+llm_service = LLMService()

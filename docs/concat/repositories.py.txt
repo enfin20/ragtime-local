@@ -1,0 +1,581 @@
+# ==========================================
+# GROUPE : repositories
+# ==========================================
+
+
+# ------------------------------------------
+# FICHIER : repositories\__init__.py
+# ------------------------------------------
+
+
+# ------------------------------------------
+# FICHIER : repositories\base.py
+# ------------------------------------------
+from contextlib import contextmanager
+from database.connection import SessionLocal
+
+class BaseRepository:
+    """
+    Classe parente pour gérer proprement les sessions DB.
+    Permet d'utiliser 'with self.get_session() as db:'
+    """
+    @contextmanager
+    def get_session(self):
+        db = SessionLocal()
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+# ------------------------------------------
+# FICHIER : repositories\chunk.py
+# ------------------------------------------
+import uuid
+import logging
+from typing import List
+from schemas.doc import Chunk as ChunkSchema
+from database.connection import get_chroma_client
+
+logger = logging.getLogger(__name__)
+
+class ChunkRepository:
+    """
+    Gère les interactions avec la base vectorielle ChromaDB.
+    Récupère la collection dynamiquement pour éviter les erreurs de "Zombie Connection".
+    """
+    def __init__(self):
+        self.client = get_chroma_client()
+
+    @property
+    def collection(self):
+        """
+        PROPRIÉTÉ MAGIQUE :
+        Récupère la collection 'rag_chunks' fraîche à chaque appel.
+        Si la collection a été supprimée par un script de clean, elle est recréée ou retrouvée ici.
+        """
+        return self.client.get_or_create_collection(name="rag_chunks")
+
+    def add_chunks(self, doc_id: str, employee: str, chunks: List[ChunkSchema]):
+        if not chunks:
+            return
+
+        # 1. Nettoyage (On utilise self.collection qui est toujours à jour)
+        self.delete_chunks_by_doc(doc_id, employee)
+
+        ids = []
+        documents = []
+        metadatas = []
+        
+        for i, chunk in enumerate(chunks):
+            chunk_id = f"{doc_id}_{i}_{str(uuid.uuid4())[:8]}"
+            ids.append(chunk_id)
+            documents.append(chunk.content)
+            
+            # 2. Aplatissement des métadonnées
+            meta = chunk.metadata.copy()
+            meta["doc"] = doc_id
+            meta["employee"] = employee
+            
+            clean_meta = {}
+            for k, v in meta.items():
+                if isinstance(v, list):
+                    clean_meta[k] = ",".join(map(str, v))
+                elif v is None:
+                    clean_meta[k] = ""
+                else:
+                    clean_meta[k] = v
+            
+            metadatas.append(clean_meta)
+
+        # 3. Ajout
+        try:
+            self.collection.add(
+                ids=ids,
+                documents=documents,
+                metadatas=metadatas
+            )
+            logger.info(f"✅ [Chroma] {len(ids)} chunks ajoutés pour {doc_id}")
+        except Exception as e:
+            logger.error(f"❌ Erreur ajout Chroma : {e}")
+            raise e
+
+    def search(self, query: str, employee: str, limit: int = 5):
+        try:
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=limit,
+                where={"employee": employee}
+            )
+            return results
+        except Exception as e:
+            logger.error(f"❌ Erreur recherche Chroma : {e}")
+            return {"ids": [], "documents": [], "metadatas": [], "distances": []}
+
+    def delete_chunks_by_doc(self, doc_id: str, employee: str):
+        try:
+            self.collection.delete(
+                where={"$and": [{"doc": doc_id}, {"employee": employee}]}
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur suppression chunks (peut-être vides) : {e}")
+
+chunk_repository = ChunkRepository()
+
+# ------------------------------------------
+# FICHIER : repositories\credits.py
+# ------------------------------------------
+from repositories.user import user_repository
+from repositories.base import BaseRepository
+from database.models.log import ApiLogModel
+from sqlalchemy import func
+from datetime import datetime
+
+class CreditsRepository(BaseRepository):
+    
+    def get_current_credit(self, employee: str) -> dict:
+        """
+        Replique de creditsRepository.getCurrentCredit()
+        Retourne { currentUsage, totalCredit }
+        """
+        with self.get_session() as db:
+            # 1. Récupérer Total Credit (User)
+            user = user_repository.get_by_employee(employee)
+            total_credit = user.credit if user else 0
+            
+            # 2. Calculer Current Usage (Somme des coûts du mois)
+            # Simplifié pour l'instant : on compte juste les logs ou on met 0
+            # Pour faire EXACTEMENT comme Node, il faudrait sommer api_logs.total_cost
+            
+            # Exemple simple : Somme des coûts > 0 ce mois-ci
+            now = datetime.utcnow()
+            start_of_month = datetime(now.year, now.month, 1)
+            
+            usage_query = db.query(func.sum(ApiLogModel.total_cost)).filter(
+                ApiLogModel.employee == employee,
+                ApiLogModel.total_cost > 0,
+                ApiLogModel.start_time >= start_of_month
+            ).scalar()
+            
+            current_usage = usage_query if usage_query else 0
+
+            return {
+                "currentUsage": current_usage,
+                "totalCredit": total_credit
+            }
+
+credits_repository = CreditsRepository()
+
+# ------------------------------------------
+# FICHIER : repositories\doc.py
+# ------------------------------------------
+from datetime import datetime
+from collections import Counter
+import logging
+
+from database.models.doc import DocModel
+from database.models.doc_category import DocCategoryModel 
+from schemas.doc import DocCreate, DocResponse 
+from .base import BaseRepository
+
+logger = logging.getLogger(__name__)
+
+class DocRepository(BaseRepository):
+    
+    def get_doc(self, doc_id: str, employee: str) -> DocResponse | None:
+        with self.get_session() as db:
+            doc = db.query(DocModel).filter(
+                DocModel.doc == doc_id,
+                DocModel.employee == employee
+            ).first()
+
+            if not doc:
+                alt_id = doc_id[:-1] if doc_id.endswith("/") else doc_id + "/"
+                doc = db.query(DocModel).filter(
+                    DocModel.doc == alt_id,
+                    DocModel.employee == employee
+                ).first()
+
+            if doc:
+                return DocResponse.model_validate(doc)
+            return None
+
+    def upsert_doc(self, data: DocCreate) -> DocResponse:
+        with self.get_session() as db:
+            existing = db.query(DocModel).filter(
+                DocModel.doc == data.doc,
+                DocModel.employee == data.employee
+            ).first()
+
+            doc_to_return = None
+
+            if existing:
+                existing.category = data.category
+                existing.tags = data.tags
+                existing.synthesis = data.synthesis
+                existing.suggested_tags = data.suggested_tags
+                existing.quality = data.quality
+                existing.page_content = data.page_content
+                existing.status = data.status
+                existing.date_update = datetime.now()
+                
+                db.add(existing)
+                db.commit()
+                db.refresh(existing)
+                doc_to_return = existing
+            else:
+                new_doc = DocModel(**data.model_dump())
+                db.add(new_doc)
+                db.commit()
+                db.refresh(new_doc)
+                doc_to_return = new_doc
+             
+            return DocResponse.model_validate(doc_to_return)
+
+    def update_status(self, doc_id: str, employee: str, status: str):
+        with self.get_session() as db:
+            doc = db.query(DocModel).filter(
+                DocModel.doc == doc_id, 
+                DocModel.employee == employee
+            ).first()
+            if doc:
+                doc.status = status
+                doc.date_update = datetime.now()
+                db.commit()
+
+    def delete_doc(self, doc_id: str, employee: str) -> dict:
+        # Import local pour éviter boucle
+        from repositories.chunk import chunk_repository 
+
+        with self.get_session() as db:
+            doc = db.query(DocModel).filter(
+                DocModel.doc == doc_id,
+                DocModel.employee == employee
+            ).first()
+
+            if not doc:
+                alt_id = doc_id[:-1] if doc_id.endswith("/") else doc_id + "/"
+                doc = db.query(DocModel).filter(
+                    DocModel.doc == alt_id,
+                    DocModel.employee == employee
+                ).first()
+
+            if not doc:
+                return {
+                    "status": "success", 
+                    "message": "No document found to delete."
+                }
+
+            chunk_repository.delete_chunks_by_doc(doc.doc, employee)
+            
+            db.delete(doc)
+            db.commit()
+            
+            return {
+                "status": "success", 
+                "message": f"{doc_id} SUCCESS_DELETE"
+            }
+
+    # --- MÉTHODES REQUISES POUR LE FRONTEND (Node.js Parity) ---
+
+    def get_unique_tags(self, employee: str) -> list[str]:
+        """Retourne une liste simple de tags [str]"""
+        with self.get_session() as db:
+            results = db.query(DocModel.tags).filter(DocModel.employee == employee).all()
+            unique_tags = set()
+            for (tag_list,) in results:
+                if tag_list and isinstance(tag_list, list):
+                    unique_tags.update(tag_list)
+            return sorted(list(unique_tags))
+
+    def get_tags_with_count(self, employee: str) -> list[dict]:
+        """Retourne les tags avec leur nombre d'occurrences [{tag, count}]"""
+        with self.get_session() as db:
+            results = db.query(DocModel.tags).filter(DocModel.employee == employee).all()
+            all_tags = []
+            for (tag_list,) in results:
+                if tag_list and isinstance(tag_list, list):
+                    all_tags.extend(tag_list)
+            
+            counter = Counter(all_tags)
+            
+            # Tri par count décroissant, puis alphabétique
+            response = [
+                {"tag": tag, "count": count} 
+                for tag, count in counter.items()
+            ]
+            response.sort(key=lambda x: (-x["count"], x["tag"]))
+            
+            return response
+
+    def get_unique_categories(self, employee: str) -> list[dict]:
+        """Retourne les catégories simples présentes dans les docs"""
+        with self.get_session() as db:
+            results = db.query(DocModel.category).filter(
+                DocModel.employee == employee
+            ).distinct().all()
+            
+            categories = []
+            for (cat,) in results:
+                if cat:
+                    categories.append({"label": cat.capitalize(), "value": cat})
+            return categories
+
+    def get_all_active_categories(self) -> list[dict]:
+        """Retourne la configuration complète des catégories actives"""
+        with self.get_session() as db:
+            cats = db.query(DocCategoryModel).filter(
+                DocCategoryModel.is_active == True
+            ).all()
+            
+            return [
+                {
+                    "category": c.category,
+                    "description": c.description,
+                    "is_active": c.is_active,
+                    "extraction_instructions": c.extraction_instructions,
+                    "data_schema": c.data_schema
+                }
+                for c in cats
+            ]
+        
+    def get_docs_by_tag(self, employee: str, tag: str) -> list[dict]:
+        """
+        Replique EXACTE de tagsManagement.handleGetTagsDocsWorkflow (Node.js)
+        Filtre les docs par tag et formate en DocSummary (aplatissement du pageContent).
+        """
+        with self.get_session() as db:
+            # 1. Récupération brute (filtrage employé + exclusion Failed)
+            # Note: Le filtrage JSON exact "contains" dépend du moteur DB. 
+            # Pour la parité stricte et la compatibilité SQLite, on filtre le tag en Python.
+            docs = db.query(DocModel).filter(
+                DocModel.employee == employee,
+                DocModel.status != "Failed"
+            ).all()
+
+            results = []
+            target_tag = tag.strip().lower()
+
+            for doc in docs:
+                # 2. Filtrage Tag (Case insensitive comme Node)
+                doc_tags = [t.lower() for t in (doc.tags or [])]
+                
+                if target_tag in doc_tags:
+                    # 3. Mapping "DocSummary" (Identique à tags.service.ts)
+                    pc = doc.page_content or {}
+                    
+                    # Gestion sécurisée des sous-objets pour éviter crash si None
+                    current_company = pc.get("current_company", {})
+                    if not isinstance(current_company, dict): 
+                        current_company = {}
+
+                    summary = {
+                        "doc": doc.doc,
+                        "source": doc.source,
+                        "category": doc.category,
+                        "name": doc.name or "",
+                        "tags": doc.tags,
+                        "status": doc.status,
+                        "quality": doc.quality,
+                        "synthesis": doc.synthesis,
+                        "suggested_tags": doc.suggested_tags,
+                        "origin": doc.origin,
+                        "date_init": doc.date_init,
+                        "date_update": doc.date_update,
+                        
+                        # --- CHAMPS APLATIS (FLATTENED) ---
+                        "about": pc.get("about", ""),
+                        "current_company_name": current_company.get("name", ""),
+                        "current_title": current_company.get("title", ""),
+                        "modified_fields": doc.modified_fields or "",
+                        "manual_comment": doc.manual_comment or ""
+                    }
+                    results.append(summary)
+            
+            return results
+        
+doc_repository = DocRepository()
+
+# ------------------------------------------
+# FICHIER : repositories\log.py
+# ------------------------------------------
+from schemas.log import ApiLogCreate
+from database.models.log import ApiLogModel
+from .base import BaseRepository
+
+class LogRepository(BaseRepository):
+    def create_log(self, log_data: ApiLogCreate):
+        with self.get_session() as db:
+            log = ApiLogModel(**log_data.model_dump())
+            db.add(log)
+            # Pas de return nécessaire pour du logging fire-and-forget
+            
+log_repository = LogRepository()
+
+# ------------------------------------------
+# FICHIER : repositories\prompt.py
+# ------------------------------------------
+from sqlalchemy.orm import Session
+from database.models.prompt import PromptModel
+from schemas.prompt import PromptCreate, PromptResponse
+from .base import BaseRepository
+
+class PromptRepository(BaseRepository):
+    
+    def get_by_name(self, name: str) -> PromptResponse | None:
+        with self.get_session() as db:
+            prompt = db.query(PromptModel).filter(PromptModel.name == name).first()
+            if prompt:
+                return PromptResponse.model_validate(prompt)
+            return None
+
+    def upsert_prompt(self, data: PromptCreate) -> PromptResponse:
+        """
+        Met à jour le prompt s'il existe (basé sur le nom), sinon le crée.
+        """
+        with self.get_session() as db:
+            existing = db.query(PromptModel).filter(PromptModel.name == data.name).first()
+            
+            if existing:
+                existing.prompt = data.prompt
+                existing.user = data.user
+                existing.description = data.description
+                db.add(existing)
+                db.commit()
+                db.refresh(existing)
+                return PromptResponse.model_validate(existing)
+            else:
+                new_prompt = PromptModel(**data.model_dump())
+                db.add(new_prompt)
+                db.commit()
+                db.refresh(new_prompt)
+                return PromptResponse.model_validate(new_prompt)
+
+prompt_repository = PromptRepository()
+
+# ------------------------------------------
+# FICHIER : repositories\tavily.py
+# ------------------------------------------
+import os
+import requests
+import logging
+import json
+from dotenv import load_dotenv
+
+load_dotenv()
+logger = logging.getLogger(__name__)
+
+class TavilyRepository:
+    def __init__(self):
+        self.api_key = os.getenv("TAVILY_API_KEY")
+        self.extract_url = "https://api.tavily.com/extract"
+        if not self.api_key:
+            logger.warning("⚠️ TAVILY_API_KEY non définie. Le scraping va échouer.")
+
+        
+    def extract_content(self, url: str) -> str:
+        """
+        Utilise l'API Tavily Extract pour récupérer le contenu brut d'une URL.
+        """
+
+
+        logger.info(f"🌐 [Tavily] Extracting content from: {url}")
+
+        try:
+            response = requests.post(
+                self.extract_url,
+                json={
+                    "api_key": self.api_key,
+                    "urls": [url],
+                    "include_images": False
+                },
+                timeout=30 # Bonnes pratiques : timeout
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"❌ Tavily API Error: {response.status_code} - {response.text}")
+                return ""
+
+            data = response.json()
+            results = data.get("results", [])
+            
+            if results and len(results) > 0:
+                raw_content = results[0].get("raw_content", "")
+                logger.info(f"✅ [Tavily] Content retrieved ({len(raw_content)} chars)")
+                return raw_content
+            
+            return ""
+
+        except Exception as e:
+            logger.error(f"❌ Error communicating with Tavily: {e}")
+            return ""
+
+tavily_repository = TavilyRepository()
+
+# ------------------------------------------
+# FICHIER : repositories\user.py
+# ------------------------------------------
+# ------------------------------------------
+# FICHIER : repositories/user.py
+# ------------------------------------------
+from sqlalchemy.orm import Session
+from database.models.user import LoginModel
+from schemas.user import LoginCreate, LoginResponse 
+from .base import BaseRepository
+
+class UserRepository(BaseRepository):
+    
+    def get_by_employee(self, employee: str) -> LoginResponse | None:
+        with self.get_session() as db:
+            user = db.query(LoginModel).filter(LoginModel.employee == employee).first()
+            if user:
+                return LoginResponse.model_validate(user)
+            return None
+
+    def create_user(self, user_data: LoginCreate) -> LoginResponse:
+        with self.get_session() as db:
+            user = LoginModel(
+                employee=user_data.employee,
+                company=user_data.company,
+                lastname=user_data.lastname,
+                firstname=user_data.firstname,
+                credit=user_data.credit,
+                password=user_data.password, 
+                services=user_data.services,
+                api_key=user_data.api_key
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            return LoginResponse.model_validate(user)
+
+    # --- MÉTHODE MANQUANTE AJOUTÉE ICI ---
+    def verify_credentials(self, employee: str, password: str) -> dict:
+        """
+        Vérifie les identifiants et retourne les droits (services).
+        Equivalent strict de loginsRepository.verifyCredentials en Node.js
+        """
+        with self.get_session() as db:
+            # Recherche user avec employee ET password
+            # (En prod, on utiliserait un hash, mais on calque la logique Node fournie)
+            user = db.query(LoginModel).filter(
+                LoginModel.employee == employee,
+                LoginModel.password == password
+            ).first()
+
+            if not user:
+                return {"isValid": False, "services": False}
+
+            # Gestion des services (JSON/Dict)
+            # Si user.services est vide ou None -> False
+            has_services = user.services and len(user.services) > 0
+            
+            return {
+                "isValid": True, 
+                "services": user.services if has_services else False
+            }
+
+user_repository = UserRepository()

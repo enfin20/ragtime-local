@@ -1,0 +1,217 @@
+# ==========================================
+# GROUPE : schemas
+# ==========================================
+
+
+# ------------------------------------------
+# FICHIER : schemas\__init__.py
+# ------------------------------------------
+
+
+# ------------------------------------------
+# FICHIER : schemas\api.py
+# ------------------------------------------
+from pydantic import BaseModel
+from typing import List, Optional, Any, Dict
+
+# --- INGESTION ---
+class IngestTextRequest(BaseModel):
+    text: str
+    tags: List[str] = []
+    employee: str = "api_user"
+
+class IngestUrlRequest(BaseModel):
+    url: str
+    tags: List[str] = []
+    employee: str = "api_user"
+
+class IngestResponse(BaseModel):
+    status: str
+    doc_id: str
+    chunks_count: int
+    strategy: str
+
+# --- CHAT ---
+class ChatRequest(BaseModel):
+    question: str
+    employee: str = "api_user"
+    tags: Optional[List[str]] = None
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: List[str]
+
+# --- SEARCH (Debug) ---
+class SearchRequest(BaseModel):
+    query: str
+    limit: int = 5
+    employee: str = "api_user"
+
+# ------------------------------------------
+# FICHIER : schemas\chat.py
+# ------------------------------------------
+# Fichier : schemas/chat.py
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+
+class ChatRequestLegacy(BaseModel):
+    """
+    Schéma strict correspondant à la requête du frontend Node.js.
+    Gère les filtres d'exclusion et l'historique.
+    """
+    question: str
+    employee: str
+    tags: List[str] = []
+    
+    # Filtres avancés (Exclusion, Historique, Prompt spécifique)
+    exclude: Optional[Dict[str, Any]] = None 
+    history: Optional[List[Any]] = None
+    prompt: Optional[str] = None
+    strict_context: Optional[bool] = False
+    
+    # Contexte technique
+    job_id: Optional[str] = None
+
+# ------------------------------------------
+# FICHIER : schemas\doc.py
+# ------------------------------------------
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+
+# --- CHUNKS (Partie Vectorielle) ---
+class ChunkMetadata(BaseModel):
+    doc: str
+    type: str = "general"
+    page: Optional[int] = None
+    source_type: Optional[str] = None
+    # Permet d'accepter d'autres champs dynamiques
+    class Config:
+        extra = "allow"
+
+class Chunk(BaseModel):
+    content: str
+    metadata: Dict[str, Any]
+    embeddings: Optional[List[float]] = None
+
+# --- DOCS (Partie Métadonnée) ---
+class DocBase(BaseModel):
+    doc: str
+    category: str
+    source: str
+    origin: str
+    tags: List[str] = []
+    status: str = "Processing"
+    quality: float = 0.0
+    synthesis: str = ""
+    suggested_tags: List[str] = []
+    name: Optional[str] = None
+    manual_comment: Optional[str] = None
+
+class DocCreate(DocBase):
+    employee: str
+    job_id: str
+    page_content: Dict[str, Any] # Le JSON complet du doc
+
+class DocResponse(DocBase):
+    id: int
+    employee: str                # <--- AJOUTÉ
+    job_id: str                  # <--- AJOUTÉ
+    page_content: Dict[str, Any] # <--- AJOUTÉ
+    
+    # Champs optionnels qui viennent de la DB
+    previous_page_content: Optional[Dict[str, Any]] = None
+    modified_fields: Optional[str] = None
+    
+    date_init: datetime
+    date_update: datetime
+    
+    class Config:
+        from_attributes = True
+
+# ------------------------------------------
+# FICHIER : schemas\log.py
+# ------------------------------------------
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
+from datetime import datetime
+
+class ApiLogBase(BaseModel):
+    employee: str
+    job_id: str
+    method: str
+    original_url: str
+    status_code: Optional[int] = None
+    duration: Optional[float] = None
+    total_cost: Optional[float] = None
+
+class ApiLogCreate(ApiLogBase):
+    ip: Optional[str] = None
+    user_agent: Optional[str] = None
+    api: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    response: Optional[Dict[str, Any]] = None
+
+class ApiLogResponse(ApiLogBase):
+    id: int
+    start_time: datetime
+    
+    class Config:
+        from_attributes = True
+
+# ------------------------------------------
+# FICHIER : schemas\prompt.py
+# ------------------------------------------
+from pydantic import BaseModel
+from typing import Optional
+
+class PromptBase(BaseModel):
+    name: str
+    prompt: str
+    user: str = "system"
+    description: Optional[str] = None
+
+class PromptCreate(PromptBase):
+    pass
+
+class PromptResponse(PromptBase):
+    id: int
+    
+    class Config:
+        from_attributes = True
+
+# ------------------------------------------
+# FICHIER : schemas\user.py
+# ------------------------------------------
+from pydantic import BaseModel, Field
+from typing import Dict, Optional
+
+class LoginBase(BaseModel):
+    employee: str
+    company: str 
+    lastname: str
+    firstname: str
+    credit: float = 0.0
+    services: Dict[str, bool] = Field(default_factory=dict)
+
+class LoginCreate(LoginBase):
+    password: str
+    api_key: Optional[str] = None
+
+class LoginResponse(LoginBase):
+    id: int
+    # On ne renvoie jamais le mot de passe !
+    
+    class Config:
+        from_attributes = True # Permet de convertir l'objet SQLAlchemy en Pydantic
+
+class LoginRequest(BaseModel):
+    employee: str
+    password: str
+
+# AJOUT : Schéma pour la réponse de login
+class LoginSuccessResponse(BaseModel):
+    status: str
+    message: str
+    token: str
+    services: Dict[str, bool] | bool # Peut être un dict ou False

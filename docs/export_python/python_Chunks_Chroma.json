@@ -1,0 +1,322 @@
+[
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_0_5c387a3a",
+      "content": "Publish AI, ML & data-science insights to a global community of data professionals.\n\nSign in\n\n[Submit an Article](https://contributor.insightmediagroup.io/)\n\n* [LinkedIn](https://www.linkedin.com/company/towards-data-science/?originalSubdomain=ca)\n* [X](https://x.com/TDataScience)\n\n[Artificial Intelligence](https://towardsdatascience.com/category/artificial-intelligence/)\n\n# How to Develop AI-Powered Solutions, Accelerated by AI\n\nFrom idea to impact :  using AI as your accelerating copilot\n\n[Anna Via](https://towardsdatascience.com/author/annaviaba/)\n\n11 min read\n\nThe AI revolution is here, and it’s transforming the way we live and work. For companies, this revolution presents a dual opportunity. On one hand, the chance to solve previously really complex problems and to build incredible new products and features. On the other hand, the promise to boost efficiency across a wide range of tasks.\n\n--- Questions Potentielles ---\nQu'est-ce que l'Insight Media Group ?\n\n Comment les entreprises peuvent-elles tirer parti de la révolution de l'intelligence artificielle ?\n\n Quels sont les avantages et les défis pour les entreprises dans le contexte de la révolution de l'intelligence artificielle ?",
+      "metadata": {
+         "has_questions": true,
+         "tags": "",
+         "index": 0,
+         "type": "general",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "employee": "cv@duhamel.xyz",
+         "entities_people": "Anna Via"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_1_435b1275",
+      "content": "Many resources cover one opportunity or the other, but as a ML/AI Product Manager, I am actually interested in considering the two opportunities at the same time. What this actually means is: **how to successfully develop AI-powered solutions, accelerated by AI itself**. Based on my experience and learnings, I’ve split the process into five phases: ideation, design & plan, development, deployment, and impact and monitoring. In each phase, we’ll cover “*what*” needs to happen, but also “*how*” to use AI to boost efficiency and quality.\n\n## Phase 1: Ideation\n\n> *The goal of this phase is to move from a high-level objective to a specific, prioritized solution.*\n\nThe first and most critical step is to remember that **AI is a tool, not a solution**. Always start with the problem you need to solve. It should be directly aligned with your company’s high-level **OKRs** and validated with evidence from **user research** and data.\n\n--- Questions Potentielles ---\nQu'est-ce que signifie pour un Product Manager de considérer les deux opportunités liées à l'AI et la ML en même temps ?\n\n Comment utiliser efficacement l'IA comme outil pour booster l'efficacité et la qualité dans chaque phase du développement d'une solution AI ?\n\n Quels sont les étapes clés à suivre pendant la phase d'idéation, notamment en termes de validation des objectifs et de recherche sur les utilisateurs ?",
+      "metadata": {
+         "has_questions": true,
+         "type": "general",
+         "entities_people": "ML/AI Product Manager",
+         "employee": "cv@duhamel.xyz",
+         "index": 1,
+         "tags": "",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_2_02ab2e09",
+      "content": "Once the problem is clearly defined, **brainstorm a variety of solutions**. This should include both traditional non-AI approaches and potential AI-powered features. **Prioritize these solutions** using a structured method. A framework like **RICE** (Reach, Impact, Confidence, Effort) allows you to make a data-informed decision by weighing the potential value of each solution against its cost. For AI solutions, remember that “Effort” includes dealing with AI’s complexity such as data acquisition, system evaluation, or determining required guardrails.\n\nTo make sure this blog post is not too abstract, I’ll use my favorite marketplace use case as an example. A common user pain in marketplaces is the time and effort it takes to list new items (e.g. determining the right price, category, writing the description…). Data allows to quantify this problem: a high percentage of users who start creating a listing but never finish.\n\n--- Questions Potentielles ---\nQuel est le premier pas à suivre pour résoudre un problème, selon le texte ?\n\n Comment les solutions proposées dans un marché peuvent-elles être priorisées en utilisant un cadre comme RICE ? \n\n Quels sont les facteurs qui contribuent au \"Effort\" lors de l'utilisation d'IA dans la résolution d'un problème ?",
+      "metadata": {
+         "type": "general",
+         "entities_people": "Aucun nom spécifique mentionné",
+         "entities_tools": "Qakbot, Plateforme de signalement",
+         "employee": "cv@duhamel.xyz",
+         "entities_locations": "France, Russie",
+         "tags": "",
+         "has_questions": true,
+         "index": 2,
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_3_d6d6205a",
+      "content": "To address this, you could consider traditional non-AI solutions like offering templates, providing tips for each field, or creating a better onboarding process. Or, you could explore AI-powered solutions, such as using a large language model (LLM) to generate a product description or suggest a category. AI is a really cool tool though, as it can be applied to multiple use cases and applications, problems that used to be hard are now feasible, and it lowers the entry barriers to predictive models.\n\n> ***Building AI products always seems easier than it really is. The main hidden challenges are the integration of non-deterministic, probabilistic models (ensuring their outputs are relevant, consistent, safe…) while aiming for competitive advantage (your core enabler is an external provider any competitor can user).***\n\n### ⚡️ Accelerating the Ideation Phase with AI\n\n--- Questions Potentielles ---\nQuelles sont les solutions traditionnelles pour résoudre les défis liés à la création de produits AI ?\n\n Comment peut-on utiliser un grand modèle de langage (LLM) pour générer une description de produit ou suggérer une catégorie ?\n\n Quels sont les principaux défis cachés associés à la création de produits AI, et comment peuvent-ils être abordés ?",
+      "metadata": {
+         "has_questions": true,
+         "tags": "",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "entities_tools": "",
+         "employee": "cv@duhamel.xyz",
+         "type": "general",
+         "entities_companies": "",
+         "index": 3
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_4_f44846bd",
+      "content": "### ⚡️ Accelerating the Ideation Phase with AI\n\n* **Tools for Brainstorming**: AI chatbots like OpenAI’s ChatGPT, Google’s Gemini, Anthropic’s Claude, or Perplexity can act as an extra brainstorming team member. You can prompt them with your user’s pain points and ask for a wide range of potential solutions, both traditional and AI-based. Consider and test different AI chatbot “flavors” available: getting answers from simple LLMs, getting answers with LLM leveraging “reasoning” capabilities (Chain of Thought prompting or “reasoning” model versions, e.g. Gemini 2.5 Pro, OpenAI o3,…), getting answers with LLMs using web search results, and Deep Research functionalities.\n* **Tools for Knowledge Management**: Platforms like Notion AI, Mem, Tettra, or Glean can help you organize your research and ideas, using AI to connect to relevant internal knowledge and information.\n\n## Phase 2: Design & Plan solution\n\n--- Questions Potentielles ---\nQuels sont les outils d'IA que l'on peut utiliser pour augmenter la phase de génie idéatif ?\n\n Comment fonctionnent les plateformes de gestion du savoir, telles que Notion AI ou Mem, pour organiser la recherche et les idées ? \n\n Quelles sont les différentes façons dont on peut utiliser les LLMs (Large Language Models) avec des chatbots d'IA comme Gemini ou OpenAI ChatGPT ?",
+      "metadata": {
+         "employee": "cv@duhamel.xyz",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "tags": "",
+         "entities_tools": "OpenAI o3, Glean",
+         "index": 4,
+         "entities_people": "",
+         "has_questions": true,
+         "entities_companies": "Anthropic",
+         "type": "general"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_5_ec053472",
+      "content": "## Phase 2: Design & Plan solution\n\n> *The goal of this phase is to take a prioritized solution, assess and mitigate potential risks, define its MVP and create a concrete project plan and initial designs.*\n\nWith a prioritized GenAI solution in hand, implementation should be designed holistically across four dimensions:\n\n* Capturing user input and relevant context (moving from prompt to context engineering)\n* Selecting and configuring the right model (balancing cost, latency, and performance)\n* Generating and evaluating outputs for quality and safety\n* Delivering results through effective UX/UI that supports user trust and feedback.\n\n--- Questions Potentielles ---\nQuel est l'objectif principal de la phase 2 : Design & Plan solution ?\n\nComment les risques potentiels sont-ils évalués et mitigés dans cette phase ?\n\nQuelles sont les quatre dimensions à prendre en compte pour concevoir une solution d'implémentation holistique ?",
+      "metadata": {
+         "type": "general",
+         "index": 5,
+         "has_questions": true,
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "employee": "cv@duhamel.xyz",
+         "tags": ""
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_6_08b3f868",
+      "content": "Throughout, teams must embed monitoring, evaluation, and risk management practices (addressing bias, compliance, and observability) to ensure reliability, scalability, and trustworthiness. If your are building an AI Product, another crucial part of this phase is assessing the [**four big risks** of product management](https://www.svpg.com/four-big-risks/): value, usability, feasibility and viability.\n\nWith all this in mind, we start further designing and planning for the project. In this step it is key to understand how to start small (**Minimum Valuable Product**) to expand and iterate once value has been proven.\n\nFor our marketplace example, let’s consider a feature that suggests a description and category based on the product title. The flow could look like this: a user inputs their item’s title, which is then used to construct a prompt for an LLM. The model returns a suggested description and category, which are pre-filled for the user to edit.\n\n--- Questions Potentielles ---\nQuels sont les quatre grands risques de gestion de produit que doivent évaluer les équipes lors du développement d'un produit AI ? \n\nComment commencer par créer un produit minimal viable (Minimum Valuable Product) pour tester et valider sa valeur avant de l'élargir et l'iterer ?\n\nQuel est le processus de suggestion de description et de catégorie basé sur le titre d'un produit, et comment fonctionne-t-il dans le contexte d'une marketplace ?",
+      "metadata": {
+         "index": 6,
+         "employee": "cv@duhamel.xyz",
+         "entities_locations": "",
+         "entities_companies": "",
+         "entities_tools": "",
+         "has_questions": true,
+         "tags": "",
+         "type": "general",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_7_40db1180",
+      "content": "The feature’s risks can be broken down by category. For usability and value, the feature is familiar and editable, which is good for user experience. The main risk is AI hallucinating or producing non-relevant suggestions, which must be measured with evaluations during the development phase. For feasibility, generating a description and category with current LLM capabilities should be feasible. And for viability, this includes considering ethical risks, for instance, generating biased or discriminatory suggestions (e.g. a cleaning product -> “perfect for women”), which also needs to be specifically evaluated during development.\n\n> ***All the AI system’s parts need to be connected to ensure trust & value.*** For every potential risk you identify now, ensure you include it into your future evaluation plan.\n\n### ⚡️ Accelerating the Phase with AI\n\n--- Questions Potentielles ---\nQuels sont les principaux risques associés à l'utilisation de la fonctionnalité en question ?\n\n Comment les évaluateurs peuvent-ils mesurer avec précision le risque d'AI hallucinant ou produisant des suggestions non pertinentes ?\n\n Quelles sont les considérations éthiques qui doivent être prises en compte lors du développement de cette fonctionnalité ?",
+      "metadata": {
+         "tags": "",
+         "index": 7,
+         "entities_locations": "",
+         "entities_companies": "",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "entities_tools": "",
+         "type": "general",
+         "has_questions": true,
+         "employee": "cv@duhamel.xyz"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_8_e209c92b",
+      "content": "### ⚡️ Accelerating the Phase with AI\n\n* **Tools for writing**: Accelerate the creation of your Product Requirements Document (PRD) with tools like ChatPRD. You can also improve the clarity and quality of your writing with assistants like Grammarly or Quillbot, and even get specific feedback on your writing with Quarkle.\n* **Tools for preparing presentations**: Different tools like Gamma, Pitch, or [beautiful.ai](http://beautiful.ai), are offering generation of slides from simple text and other documents.\n* **Tools for prototyping**: AI can help you create everything from simple front-end mockups to complex, fully functional prototypes. Tools like Figma Make and Uizard are great for design-focused prototypes, and Claude artifacts is also great to prototype UIs really fast. Platforms like Replit, Lovable, V0, Bolt can generate prototypes closer to fully functional MVPs, by generating the code full stack.\n\n## Phase 3: Development\n\n--- Questions Potentielles ---\nQuels sont les outils disponibles pour améliorer la qualité et la clarté du contenu écrit ? \n\nComment fonctionnent les outils de génération de slides à partir de texte et d'autres documents ?\n\nQuels sont les outils de prototypage qui peuvent générer des prototypes fonctionnels plus proches de l'MVP (Minimum Viable Product) ?",
+      "metadata": {
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "type": "general",
+         "entities_tools": "ChatPRD, Grammarly, Quillbot, Quarkle, Gamma, Pitch, beautiful.ai, Figma Make, Uizard, Claude artifacts, Replit, Lovable, V0, Bolt",
+         "has_questions": true,
+         "entities_companies": "Black Basta, Hyundai",
+         "employee": "cv@duhamel.xyz",
+         "tags": "",
+         "index": 8
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_9_02bc6256",
+      "content": "## Phase 3: Development\n\n> *In this phase, you’ll move from experimenting with prompts to getting the system ready to be integrated into your platform.*\n\nThis is where **prompt engineering** and trying out different models and approaches takes place, with the goal to get the best possible outputs your use case needs. The key is to prepare a request to an LLM with specific instructions, which will return generated text in the requested format (e.g. JSON object containing the suggested description and category).\n\n> ***Avoid adding unnecessary complexity. Although AI Agents are a hot topic, they add costs, complexity and non-determinism. In many cases it is best to build a*** [***predefined workflow that concatenates LLM calls in a happy path***](https://towardsdatascience.com/a-developers-guide-to-building-scalable-ai-workflows-vs-agents/)***.***\n\n--- Questions Potentielles ---\nQu'est-ce que signifie la phase 3 de développement dans le contexte des langages artificiels ?\n\n Comment peut-on utiliser les LLM pour générer du texte avec des instructions spécifiques et obtenir des résultats précis ? \n\n Quelle est l'avantage de préférer un workflow prédefini par rapport à l'utilisation d'agents AI dans la génération de questions ?",
+      "metadata": {
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "index": 9,
+         "entities_locations": "",
+         "employee": "cv@duhamel.xyz",
+         "entities_companies": "",
+         "type": "general",
+         "tags": "",
+         "entities_tools": "",
+         "has_questions": true
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_10_6106faa8",
+      "content": "A critical and often overlooked part of development is **evaluation**. You need to be sure that the model’s predictions and generations meet a certain quality bar before they go live, and that the risks identified in phase two are mitigated. This involves defining use-case-specific evals to measure things like hallucination, correctness, bias, and task-specific performance. For a deep dive into this topic you can check my previous post:\n\nFor our marketplace example, we might want to track the percentage of times the output is in the correct format, the accuracy of the category predictions, the relevancy of the generated descriptions, the percentage of times our outputs where biased or discriminatory…\n\n> ***Evals are the hardest but most necessary step in the development phase. Try to obtain inputs as close to future reality as possible, start with manual evaluations to then escale to more automated ones.***\n\n### ⚡️ Accelerating the Phase with AI\n\n--- Questions Potentielles ---\nQu'est-ce qu'on entend par \"évaluation\" dans le contexte du développement de modèles ?\n\n Comment définir des évaluations spécifiques aux cas d'utilisation pour mesurer la qualité et l'efficacité des prédictions et des générations ? \n\n Quels sont les facteurs clés à prendre en compte lors de l'évaluation des performances d'un modèle, notamment en ce qui concerne la précision, la pertinence et la diversité des résultats ?",
+      "metadata": {
+         "tags": "",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "has_questions": true,
+         "employee": "cv@duhamel.xyz",
+         "type": "general",
+         "index": 10,
+         "entities_people": ""
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_11_796c5444",
+      "content": "### ⚡️ Accelerating the Phase with AI\n\n* **Tools for Coding**: Many software development tools now include Generative AI features that help lower the entry barrier to coding. Assistants like Github Copilot, Cursor, Windsurf, or Claude Code are widely used to suggest code, complete functions, and solve coding problems. The use of AI Chatbots is also widely extended among programmers to accelerate code implementations.\n* **Tools for Evaluation**: LLMs are both used to generate input datasets when real data is not available, and to design metrics that scale through the technique LLM as a judge.\n\n## Phase 4: Deployment\n\n> *Once your solution is developed and evaluated, you’re ready to deploy it to production. This is where you integrate the solution into your company’s processes and platform so it can be used automatically.*\n\n--- Questions Potentielles ---\nQuels sont les outils de développement logel qui incluent des fonctionnalités d'IA générative pour réduire le barrière d'entrée au coding ?\n\n Comment LLMs sont-ils utilisés pour créer des données d'entraînement lorsqu'il n'y a pas de données réelles disponibles ?\n\n Quels sont les étapes à suivre après avoir développé et évalué une solution pour la déployer en production ?",
+      "metadata": {
+         "employee": "cv@duhamel.xyz",
+         "has_questions": true,
+         "index": 11,
+         "entities_tools": "Qakbot, Plateforme de signalement, Claude Code, Cursor, Windsurf",
+         "type": "general",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "tags": "",
+         "entities_companies": "Github, Hyundai"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_12_77f1e885",
+      "content": "In our example, deploying the solution would allow that, when a user in the platform publishes a product, this **triggers the call to an LLM** to obtain the description and category from the title, and those are displayed in their corresponding touch-points.\n\nCloud providers like AWS, Azure, and Google have dedicated tools to accelerate the process of integrating LLMs into your platform in a scalable way. On top of using these tools, you will need to care about service metrics like latency to ensure a good user experience.\n\n--- Questions Potentielles ---\nQuels sont les outils dédiés par les fournisseurs de nuages (AWS, Azure et Google) pour accélérer l'intégration des LLMs dans une plateforme ?\n\n Comment peut-on garantir un bon expérience utilisateur en termes de latence lors de l'intégration d'un LLM dans une plateforme ?\n\n Quels sont les étapes nécessaires pour déployer une solution qui utilise un LLM pour afficher la description et la catégorie d'un produit publié par un utilisateur sur une plateforme ?",
+      "metadata": {
+         "entities_locations": "Russie, France",
+         "tags": "",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "entities_companies": "AWS, Azure, Google",
+         "has_questions": true,
+         "index": 12,
+         "entities_tools": "LLM, Plateforme de signalement",
+         "employee": "cv@duhamel.xyz",
+         "type": "general"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_13_282682f4",
+      "content": "A major challenge with Generative AI is the “free input/free output” nature of the technology, which can introduce new risks. For example, users might accidentally enter personal information or even try to attack your system through “prompt injection”. This is where **guardrails** come in. Guardrails are checks you put in place to ensure the robustness of your solution. They can be used to detect and block unwanted input, and to ensure outputs follow certain predefined rules like avoiding profanity or mentioning competitors.\n\n> **Don’t just deploy the AI feature: your go-live plan isn’t complete without being ready for what can go wrong in production and therefore ensuring observability (service performance, security, quality…).**\n\n### ⚡️ Accelerating the Phase with AI\n\n--- Questions Potentielles ---\nQuels sont les risques associés à la technologie de l'intelligence artificielle générative qui peuvent être introduits par son \"nature libre\" ? \n\nComment les \"guardrails\" peuvent-ils aider à détecter et à bloquer les entrées non souhaitées dans une solution ? \n\nQu'est-ce que le concept d'observabilité dans le contexte de la mise en production d'une fonctionnalité d'intelligence artificielle générative ?",
+      "metadata": {
+         "entities_companies": "",
+         "entities_tools": "",
+         "index": 13,
+         "type": "general",
+         "tags": "",
+         "entities_locations": "",
+         "employee": "cv@duhamel.xyz",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "has_questions": true
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_14_1259f9df",
+      "content": "### ⚡️ Accelerating the Phase with AI\n\n* **Tools for Guardrails**: You can implement safety checks using specific open-source libraries like Guardrails AI and LangChain, or use managed services from cloud providers like Microsoft Azure AI Content Safety. These tools, similarly to evals, many times include LLM calls to automate the guardrail check.\n\n## Phase 5: Impact and Monitoring\n\n> *Your solution is live, but the work isn’t over. Now you need to make sure it continues to perform as expected while having a positive impact to users and to your product and business.*\n\nThis involves a combination of:\n\n--- Questions Potentielles ---\nQuels sont les outils spécifiques que l'on peut utiliser pour mettre en place des contrôles de sécurité avec l'aide d'API, tels que Guardrails AI et LangChain ?\n\nComment fonctionnent les services de content safety fournis par les fournisseurs de nuages comme Microsoft Azure AI, et qu'est-ce qu'ils apportent par rapport aux outils open-source ? \n\nQuelles sont les étapes clés à suivre pour garantir que la solution continue à fonctionner correctement et à avoir un impact positif sur les utilisateurs et le produit/buisness après son lancement ?",
+      "metadata": {
+         "has_questions": true,
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "employee": "cv@duhamel.xyz",
+         "entities_tools": "Guardrails AI, LangChain, Microsoft Azure AI Content Safety",
+         "tags": "",
+         "entities_companies": "Microsoft Azure",
+         "index": 14,
+         "type": "general"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_15_37b96288",
+      "content": "This involves a combination of:\n\n* **Service monitoring**, where you use tools like Datadog or specialized platforms like WhyLabs and Arize to track the operational health and quality of your AI system in production.\n* **Quantitative data** with analytics dashboards to measure the feature’s impact on key product metrics like user retention and engagement. For our marketplace example, you’d want to see if the new feature leads to a decrease in the number of users who abandon the listing process.\n* **Qualitative feedback** from users to understand further their experience and identify areas for improvement.\n\n### ⚡️ Accelerating the Phase with AI\n\n--- Questions Potentielles ---\nQuels sont les outils utilisés pour surveiller la santé opérationnelle et la qualité d'un système AI en production ?\n\n Comment peut-on mesurer l'impact d'une nouvelle fonctionnalité sur des indicateurs clés tels que la rétention des utilisateurs et l'engagement ?\n\n Quelle forme de feedback est-elle nécessaire pour comprendre plus profondément l'expérience utilisateur et identifier les domaines d'amélioration ?",
+      "metadata": {
+         "type": "general",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "entities_tools": "Datadog, WhyLabs, Arize",
+         "index": 15,
+         "entities_companies": "Datadog, WhyLabs, Arize",
+         "tags": "",
+         "employee": "cv@duhamel.xyz",
+         "has_questions": true
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_16_f96cf6e9",
+      "content": "### ⚡️ Accelerating the Phase with AI\n\n* **Tools for Qualitative Analysis**: Many vendors that help collect user feedback, such as Typeform and Canny, are now incorporating AI features to automatically analyze and categorize responses. You can also leverage LLMs directly to analyze large volumes of qualitative feedback. Instead of manually reading thousands of comments, you can use an LLM to summarize themes, classify feedback by sentiment or topic (e.g. “inaccurate suggestion,” “UI feedback,” “latency issue”) , and identify emerging issues.\n\n> ***Not all GenAI features are shiny✨, but even the less shiny ones can be very impactful. AI solutions integrated in the backend and not user-facing, might have a lot of potential too.***\n\n## Wrapping it up\n\nDeveloping an AI-powered solution is a journey from a user problem to a measurable impact. By moving through these five phases, you can navigate complexity and risks, while significantly improving the odds of building something of value.\n\n--- Questions Potentielles ---\nQuels sont les outils qui permettent d'analyser automatiquement et de catégoriser les réponses des utilisateurs ? \n\nComment peuvent les LLMs être utilisés pour analyser et résumer les commentaires des utilisateurs ? \n\nQuelles sont les implications potentielles des solutions AI intégrées dans le backend, plutôt que dans l'interface utilisateur ?",
+      "metadata": {
+         "employee": "cv@duhamel.xyz",
+         "entities_companies": "Typeform, Canny",
+         "tags": "",
+         "type": "general",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "index": 16,
+         "has_questions": true,
+         "entities_tools": "LLMs, Qakbot"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_17_25bea047",
+      "content": "In a meta twist, AI itself has become your creative partner on this journey, ready to help you and your team brainstorm, code, and analyze feedback faster than ever before.\n\n> *AI is making this a very exciting time to be building. The only question left is: What will **you** build next?*\n\n---\n\nWritten By\n\nAnna Via\n\n[See all from Anna Via](https://towardsdatascience.com/author/annaviaba/)\n\n[Ai Product Management](https://towardsdatascience.com/tag/ai-product-management/), [Data Science](https://towardsdatascience.com/tag/data-science/), [Editors Pick](https://towardsdatascience.com/tag/editors-pick/), [Llm Applications](https://towardsdatascience.com/tag/llm-applications/), [Product Management](https://towardsdatascience.com/tag/product-management/)\n\nShare This Article\n\n--- Questions Potentielles ---\nQu'est-ce qui caractérise la relation entre l'homme et l'intelligence artificielle dans le contexte de la création ?\n\n Comment les équipes peuvent-elles bénéficier des capacités de l'IA pour améliorer leur processus créatif ?\n\n Quels sont les défis potentiels liés à la collaboration entre les humains et l'IA dans le développement de nouveaux projets ?",
+      "metadata": {
+         "entities_people": "Anna Via",
+         "tags": "",
+         "has_questions": true,
+         "index": 17,
+         "type": "general",
+         "employee": "cv@duhamel.xyz",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_18_c2c9a016",
+      "content": "Share This Article\n\n* [Share on Facebook](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Ftowardsdatascience.com%2Fhow-to-develop-ai-powered-solutions-accelerated-by-ai%2F&title=How%20to%20Develop%20AI-Powered%20Solutions%2C%20Accelerated%20by%C2%A0AI)\n* [Share on LinkedIn](https://www.linkedin.com/shareArticle?mini=true&url=https%3A%2F%2Ftowardsdatascience.com%2Fhow-to-develop-ai-powered-solutions-accelerated-by-ai%2F&title=How%20to%20Develop%20AI-Powered%20Solutions%2C%20Accelerated%20by%C2%A0AI)\n* [Share on X](https://x.com/share?url=https%3A%2F%2Ftowardsdatascience.com%2Fhow-to-develop-ai-powered-solutions-accelerated-by-ai%2F&text=How%20to%20Develop%20AI-Powered%20Solutions%2C%20Accelerated%20by%C2%A0AI)\n\nTowards Data Science is a community publication. Submit your insights to reach our global audience and earn through the TDS Author Payment Program.\n\n[Write for TDS](/questions-96667b06af5/)\n\n## Related Articles\n\n--- Questions Potentielles ---\nComment partager cet article sur les réseaux sociaux ?\n\nQuel est le programme de paiement pour les auteurs du Towards Data Science ?\n\nComment publier une réponse ou poser une question dans la communauté du Towards Data Science ?",
+      "metadata": {
+         "entities_companies": "",
+         "entities_locations": "",
+         "employee": "cv@duhamel.xyz",
+         "tags": "",
+         "index": 18,
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "has_questions": true,
+         "entities_tools": "",
+         "type": "general"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_19_e669e909",
+      "content": "[Write for TDS](/questions-96667b06af5/)\n\n## Related Articles\n\n* ## [Implementing Convolutional Neural Networks in TensorFlow](https://towardsdatascience.com/implementing-convolutional-neural-networks-in-tensorflow-bc1c4f00bd34/)\n\n   [Artificial Intelligence](https://towardsdatascience.com/category/artificial-intelligence/)\n\n  Step-by-step code guide to building a Convolutional Neural Network\n\n  [Shreya Rao](https://towardsdatascience.com/author/shreya-rao/)\n\n  6 min read\n* ## [What Do Large Language Models “Understand”?](https://towardsdatascience.com/what-do-large-language-models-understand-befdb4411b77/)\n\n   [Artificial Intelligence](https://towardsdatascience.com/category/artificial-intelligence/)\n\n  A deep dive on the meaning of understanding and how it applies to LLMs\n\n  [Tarik Dzekman](https://towardsdatascience.com/author/tarikdzekman/)\n\n--- Questions Potentielles ---\nQu'est-ce que sont les Convolutional Neural Networks (CNN) et comment fonctionnent-ils ?\n\nComment les Large Language Models (LLM) perçoivent-ils le sens des textes et quels sont leurs principaux applications ?\n\nQuel est l'objectif de la publication \"Implementing Convolutional Neural Networks in TensorFlow\" ?",
+      "metadata": {
+         "tags": "",
+         "has_questions": true,
+         "entities_people": "Shreya Rao, Tarik Dzekman",
+         "type": "general",
+         "index": 19,
+         "employee": "cv@duhamel.xyz",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_20_1bd2ef69",
+      "content": "A deep dive on the meaning of understanding and how it applies to LLMs\n\n  [Tarik Dzekman](https://towardsdatascience.com/author/tarikdzekman/)\n\n  31 min read\n* ## [Hands-on Time Series Anomaly Detection using Autoencoders, with Python](https://towardsdatascience.com/hands-on-time-series-anomaly-detection-using-autoencoders-with-python-7cd893bbc122/)\n\n   [Data Science](https://towardsdatascience.com/category/data-science/)\n\n  Here’s how to use Autoencoders to detect signals with anomalies in a few lines of…\n\n  [Piero Paialunga](https://towardsdatascience.com/author/piero-paialunga/)\n\n  12 min read\n* ## [Back To Basics, Part Uno: Linear Regression and Cost Function](https://towardsdatascience.com/back-to-basics-part-uno-linear-regression-cost-function-and-gradient-descent-590dcb3eee46/)\n\n   [Data Science](https://towardsdatascience.com/category/data-science/)\n\n  An illustrated guide on essential machine learning concepts\n\n--- Questions Potentielles ---\nQu'est-ce qu'un Autoencoder et comment il peut être utilisé pour détecter les anomalies dans un signal ?\n\nComment fonctionne l'autoencodage et quel est son application dans le domaine de la détection d'anomalies en temps réel ?\n\nQuels sont les concepts fondamentaux de machine learning abordés dans cet article, notamment la régression linéaire et le coût fonctionnel ?",
+      "metadata": {
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "index": 20,
+         "tags": "",
+         "type": "general",
+         "employee": "cv@duhamel.xyz",
+         "has_questions": true,
+         "entities_people": "Tarik Dzekman, Piero Paialunga"
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_21_69f56886",
+      "content": "[Data Science](https://towardsdatascience.com/category/data-science/)\n\n  An illustrated guide on essential machine learning concepts\n\n  [Shreya Rao](https://towardsdatascience.com/author/shreya-rao/)\n\n  6 min read\n* ## [Must-Know in Statistics: The Bivariate Normal Projection Explained](https://towardsdatascience.com/must-know-in-statistics-the-bivariate-normal-projection-explained-ace7b2f70b5b/)\n\n   [Data Science](https://towardsdatascience.com/category/data-science/)\n\n  Derivation and practical examples of this powerful concept\n\n  [Luigi Battistoni](https://towardsdatascience.com/author/lu-battistoni/)\n\n  7 min read\n* ## [Our Columns](https://towardsdatascience.com/our-columns-53501f74c86d/)\n\n   [Data Science](https://towardsdatascience.com/category/data-science/)\n\n  Columns on TDS are carefully curated collections of posts on a particular idea or category…\n\n  [TDS Editors](https://towardsdatascience.com/author/towardsdatascience/)\n\n--- Questions Potentielles ---\nQuel est le thème principal du texte fourni ?\n\nQuels sont les deux auteurs mentionnés dans le texte ?\n\nQuelle est la catégorie de blog à laquelle appartient le texte ?",
+      "metadata": {
+         "type": "general",
+         "entities_people": "Shreya Rao, Luigi Battistoni, TDS Editors",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "has_questions": true,
+         "employee": "cv@duhamel.xyz",
+         "index": 21,
+         "tags": ""
+      }
+   },
+   {
+      "id": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/_22_b53a8ef9",
+      "content": "Columns on TDS are carefully curated collections of posts on a particular idea or category…\n\n  [TDS Editors](https://towardsdatascience.com/author/towardsdatascience/)\n\n  4 min read\n* ## [Optimizing Marketing Campaigns with Budgeted Multi-Armed Bandits](https://towardsdatascience.com/optimizing-marketing-campaigns-with-budgeted-multi-armed-bandits-a65fccd61878/)\n\n   [Data Science](https://towardsdatascience.com/category/data-science/)\n\n  With demos, our new solution, and a video\n\n  [Vadim Arzamasov](https://towardsdatascience.com/author/vadim-arzamasov/)\n\n  10 min read\n\n--- Questions Potentielles ---\nQu'est-ce qu'un TDS et quel est son rôle dans la collecte de posts sur des idées ou des catégories spécifiques ?\n\nComment fonctionne le système de recommandation utilisé par les TDS pour présenter des articles liés à un utilisateur ? \n\nQuels sont les avantages du recours aux bandits multi-armés budgetés dans l'optimisation des campagnes marketing, selon l'article publié sur Towards Data Science ?",
+      "metadata": {
+         "has_questions": true,
+         "tags": "",
+         "doc": "https://towardsdatascience.com/how-to-develop-ai-powered-solutions-accelerated-by-ai/",
+         "type": "general",
+         "entities_people": "Vadim Arzamasov",
+         "employee": "cv@duhamel.xyz",
+         "index": 22
+      }
+   }
+]

@@ -1,0 +1,12 @@
+sqlalchemy
+pydantic
+chromadb
+langchain
+langchain-ollama
+langchain-text-splitters
+fastapi
+uvicorn
+python-multipart
+requests
+python-dotenv
+pypdf

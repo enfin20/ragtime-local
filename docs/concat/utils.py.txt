@@ -1,0 +1,132 @@
+# ==========================================
+# GROUPE : utils
+# ==========================================
+
+
+# ------------------------------------------
+# FICHIER : utils\json_parser.py
+# ------------------------------------------
+import json
+import logging
+import re
+
+logger = logging.getLogger(__name__)
+
+def robust_json_parse(llm_output: str) -> dict | list | None:
+    """
+    Tente d'extraire un JSON valide d'une réponse LLM, même si elle contient du markdown.
+    """
+    if not llm_output:
+        return None
+
+    try:
+        # 1. Tentative directe
+        return json.loads(llm_output)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Extraction du bloc Markdown ```json ... ```
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", llm_output, re.IGNORECASE)
+    if match:
+        json_str = match.group(1)
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Extraction brutale entre la première { et la dernière }
+    try:
+        start = llm_output.find("{")
+        end = llm_output.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            json_str = llm_output[start:end+1]
+            return json.loads(json_str)
+    except Exception as e:
+        logger.error(f"Failed to parse JSON from LLM output: {e}")
+    
+    return None
+
+# ------------------------------------------
+# FICHIER : utils\linkedin_cleaner.py
+# ------------------------------------------
+# utils/linkedin_cleaner.py
+import re
+from urllib.parse import urlparse, urlunparse
+
+def clean_linkedin_url(url: str) -> str:
+    """
+    Nettoie une URL LinkedIn pour ne garder que la partie canonique.
+    Ex: https://www.linkedin.com/in/jean-dupont?src=... -> https://www.linkedin.com/in/jean-dupont
+    """
+    if not url:
+        return ""
+        
+    try:
+        # 1. Parsing basique
+        parsed = urlparse(url.strip())
+        
+        # 2. On reconstruit sans les query params (partie après ?) ni fragments (partie après #)
+        # On garde scheme (https), netloc (www.linkedin.com) et path (/in/jean-dupont)
+        cleaned = urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
+        
+        # 3. Retirer le slash final s'il existe (convention souvent utilisée pour les IDs)
+        if cleaned.endswith("/"):
+            cleaned = cleaned[:-1]
+            
+        return cleaned
+        
+    except Exception:
+        # Fallback si l'URL est malformée, on renvoie telle quelle
+        return url
+
+# ------------------------------------------
+# FICHIER : utils\text_extractor.py
+# ------------------------------------------
+import os
+import logging
+from pydantic import FilePath
+from pypdf import PdfReader
+
+logger = logging.getLogger(__name__)
+
+class TextExtractor:
+    @staticmethod
+    def extract_from_file(file_path: str) -> str:
+        """
+        Détecte l'extension et extrait le texte.
+        Supporte: .txt, .pdf, .md
+        """
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Le fichier n'existe pas : {file_path}")
+
+        _, ext = os.path.splitext(file_path)
+        ext = ext.lower()
+
+        try:
+            if ext == ".pdf":
+                return TextExtractor._read_pdf(file_path)
+            elif ext in [".txt", ".md", ".json", ".csv"]:
+                return TextExtractor._read_text(file_path)
+            else:
+                logger.warning(f"⚠️ Extension non supportée pour l'extraction texte : {ext}")
+                return ""
+        except Exception as e:
+            logger.error(f"❌ Erreur lecture fichier {file_path}: {e}")
+            raise e
+
+    @staticmethod
+    def _read_text(path: str) -> str:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    @staticmethod
+    def _read_pdf(path: str) -> str:
+        text = ""
+        reader = PdfReader(path)
+        for page in reader.pages:
+            content = page.extract_text()
+            if content:
+                text += content + "\n"
+        return text
+
+text_extractor = TextExtractor()

@@ -1,0 +1,462 @@
+# ==========================================
+# GROUPE : api
+# ==========================================
+
+
+# ------------------------------------------
+# FICHIER : api\main.py
+# ------------------------------------------
+import logging
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from database.connection import engine
+from database.models import Base
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+# Import des routes
+from api.routes import ingest, chat, search, auth
+
+# Configuration Logs
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("api")
+
+# Initialisation DB (Au démarrage)
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(
+    title="RAGTime Local API",
+    description="API pour Ingestion et Chat RAG avec LLM Local",
+    version="1.0.0"
+)
+
+# Configuration CORS (Pour autoriser le frontend)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # À restreindre en prod
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Enregistrement des routes
+app.include_router(auth.router, prefix="/ingest", tags=["Auth"])
+app.include_router(ingest.router, prefix="/ingest", tags=["Ingestion"])
+app.include_router(chat.router, prefix="/chat", tags=["Chat"])
+app.include_router(search.router, prefix="/search", tags=["Debug Search"])
+
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "RAGTime API is running 🚀"}
+
+if __name__ == "__main__":
+    import uvicorn
+    # Lancement serveur : host 0.0.0.0 pour être accessible sur le réseau local
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# ------------------------------------------
+# FICHIER : api\routes\auth.py
+# ------------------------------------------
+# Fichier : api/routes/auth.py
+import os
+import jwt
+import logging
+from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter, HTTPException
+from repositories.user import user_repository
+from schemas.user import LoginRequest, LoginSuccessResponse
+from dotenv import load_dotenv
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# Récupération de la clé secrète (Comme en Node)
+JWT_SECRET = os.getenv("JWT_SECRET", "votre_secret_par_defaut_a_changer")
+JWT_ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_HOURS = 8 # Comme le '8h' de Node
+
+@router.post("/login", response_model=LoginSuccessResponse)
+async def login(credentials: LoginRequest):
+    """
+    Authentifie l'utilisateur et retourne un token JWT valide 8h.
+    """
+    try:
+        # 1. Vérification DB via Repository
+        result = user_repository.verify_credentials(
+            employee=credentials.employee, 
+            password=credentials.password
+        )
+        
+        # 2. Gestion échec (401)
+        if not result["isValid"]:
+            # Message exact de Node.js
+            raise HTTPException(status_code=401, detail="INVALID_IDENTIFIERS")
+
+        # 3. Création du Payload JWT
+        # Node: { employeeId: employee, employee: employee }
+        expire = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+        payload = {
+            "employeeId": credentials.employee,
+            "employee": credentials.employee,
+            "exp": expire
+        }
+
+        # 4. Signature du Token
+        token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+        # 5. Réponse Succès (Structure exacte Node)
+        logger.info(f"✅ Connexion réussie pour : {credentials.employee}")
+        
+        return {
+            "status": "success",
+            "message": "CONNEXION_SUCCESS",
+            "token": token,
+            "services": result["services"]
+        }
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"❌ Erreur Login: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+# ------------------------------------------
+# FICHIER : api\routes\chat.py
+# ------------------------------------------
+from fastapi import APIRouter, HTTPException
+from services.chat import chat_service
+from schemas.api import ChatRequest, ChatResponse
+
+router = APIRouter()
+
+@router.post("/", response_model=ChatResponse)
+async def chat_endpoint(request: ChatRequest):
+    try:
+        result = chat_service.chat(
+            question=request.question,
+            employee=request.employee,
+            tags=request.tags
+        )
+        return {
+            "answer": result["response"],
+            "sources": result["sources"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ------------------------------------------
+# FICHIER : api\routes\ingest.py
+# ------------------------------------------
+import shutil
+import os
+import uuid
+import logging
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
+from typing import Optional
+
+from utils.linkedin_cleaner import clean_linkedin_url
+from services.ingestion import ingestion_service
+from repositories.doc import doc_repository
+from repositories.credits import credits_repository
+from schemas.api import IngestTextRequest, IngestUrlRequest, IngestResponse
+from schemas.chat import ChatRequestLegacy 
+from services.chat import chat_service     
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+@router.get("/tags")
+async def get_tags_legacy(
+    employee: str = Query(..., description="User identifier"),
+    job_id: Optional[str] = Query(None)
+):
+    try:
+        tags_data = doc_repository.get_tags_with_count(employee)
+        credit_info = credits_repository.get_current_credit(employee)
+        final_job_id = job_id if job_id else f"job_{uuid.uuid4()}"
+
+        return {
+            "status": "success",
+            "tags": tags_data,
+            "currentUsage": credit_info["currentUsage"],
+            "totalCredit": credit_info["totalCredit"],
+            "job_id": final_job_id
+        }
+
+    except Exception as e:
+        logger.error(f"Error GET /tags: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/docscategories")
+async def get_docs_categories_legacy(
+    employee: str = Query("system", description="User identifier"),
+    job_id: Optional[str] = Query(None)
+):
+    try:
+        categories_data = doc_repository.get_all_active_categories()
+        
+        if not categories_data:
+            categories_data = [
+                {
+                    "category": "profile",
+                    "description": "Profil LinkedIn ou CV",
+                    "is_active": True,
+                    "extraction_instructions": "Extrais l'expérience...",
+                    "data_schema": {}
+                },
+                {
+                    "category": "company",
+                    "description": "Page entreprise",
+                    "is_active": True,
+                    "extraction_instructions": "Extrais les infos société...",
+                    "data_schema": {}
+                },
+                {
+                    "category": "post",
+                    "description": "Publication ou Article",
+                    "is_active": True,
+                    "extraction_instructions": "Extrais le contenu...",
+                    "data_schema": {}
+                }
+            ]
+
+        credit_info = credits_repository.get_current_credit(employee)
+        final_job_id = job_id if job_id else f"job_{uuid.uuid4()}"
+        
+        return {
+            "status": "success",
+            "docscategories": categories_data,
+            "currentUsage": credit_info["currentUsage"],
+            "totalCredit": credit_info["totalCredit"],
+            "job_id": final_job_id
+        }
+
+    except Exception as e:
+        logger.error(f"Error GET /docscategories: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/urls")
+async def ingest_url_get_legacy(
+    url: str = Query(..., description="Target URL"),
+    employee: str = Query(..., description="User identifier"),
+    job_id: Optional[str] = Query(None),
+    fields: Optional[str] = Query(None)
+):
+    try:
+        cleaned_url = url
+        if "linkedin.com" in url:
+            cleaned_url = clean_linkedin_url(url)
+            
+        doc = doc_repository.get_doc(doc_id=cleaned_url, employee=employee)
+
+        return {
+            "status": "success",
+            "message": "doc retrieved",
+            "data": [doc] if doc else []
+        }
+
+    except Exception as e:
+        logger.error(f"Error GET /urls: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.delete("/urls")
+async def ingest_url_delete_legacy(
+    url: str = Query(..., description="Target URL"),
+    employee: str = Query(..., description="User identifier")
+):
+    try:
+        cleaned_url = url
+        if "linkedin.com" in url:
+            cleaned_url = clean_linkedin_url(url)
+            
+        result = doc_repository.delete_doc(doc_id=cleaned_url, employee=employee)
+        return result
+
+    except Exception as e:
+        logger.error(f"Error DELETE /urls: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@router.post("/urls", response_model=IngestResponse)
+async def ingest_url_post_legacy(
+    request: IngestUrlRequest, 
+    fields: Optional[str] = Query(None)
+):
+    try:
+        result = ingestion_service.process_input(
+            input_data=request.url,
+            employee=request.employee,
+            tags=request.tags,
+            origin=f"legacy_post_{fields}" if fields else "legacy_post"
+        )
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        logger.error(f"FATAL ERROR: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# =====================================================================
+# STANDARD API ROUTES
+# =====================================================================
+
+@router.post("/text", response_model=IngestResponse)
+async def ingest_text(request: IngestTextRequest):
+    try:
+        result = ingestion_service.process_input(
+            input_data=request.text,
+            employee=request.employee,
+            tags=request.tags,
+            origin="api_text"
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/url", response_model=IngestResponse)
+async def ingest_url(request: IngestUrlRequest):
+    try:
+        result = ingestion_service.process_input(
+            input_data=request.url,
+            employee=request.employee,
+            tags=request.tags,
+            origin="api_url"
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/file", response_model=IngestResponse)
+async def ingest_file(
+    file: UploadFile = File(...),
+    employee: str = Form("api_user"),
+    tags: str = Form("")
+):
+    temp_file_path = f"temp_{file.filename}"
+    try:
+        with open(temp_file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        
+        result = ingestion_service.process_input(
+            input_data=temp_file_path,
+            employee=employee,
+            tags=tag_list,
+            origin="api_file"
+        )
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+@router.get("/version")
+async def get_version():
+    return {
+        "version": "locale"
+    }
+
+@router.get("/tags/{tag}/docs")
+async def get_tags_docs_legacy(
+    tag: str,
+    employee: str = Query(..., description="User identifier"),
+    job_id: Optional[str] = Query(None)
+):
+    """
+    Replique EXACTE de 'GET /tags/:tags/docs' (Node.js).
+    Retourne la liste des documents filtrés par tag avec le format DocSummary.
+    """
+    try:
+        # 1. Récupération des docs formatés via le repository
+        docs_list = doc_repository.get_docs_by_tag(employee, tag)
+        
+        # 2. Récupération des crédits (Middleware simulation)
+        credit_info = credits_repository.get_current_credit(employee)
+        final_job_id = job_id if job_id else f"job_{uuid.uuid4()}"
+
+        # 3. Réponse JSON structure Node.js
+        return {
+            "status": "success",
+            "docs": docs_list,
+            # Champs injectés par contextMiddleware
+            "currentUsage": credit_info["currentUsage"],
+            "totalCredit": credit_info["totalCredit"],
+            "job_id": final_job_id
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Erreur GET /tags/{tag}/docs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/chat")
+async def chat_legacy(request: ChatRequestLegacy):
+    """
+    Replique EXACTE de 'POST /chat' (Node.js).
+    Route propre qui délègue la logique au service.
+    """
+    try:
+        # 1. Appel du Service Métier (Logique pure)
+        chat_result = chat_service.handle_legacy_chat(request)
+
+        # 2. Récupération des crédits (Middleware simulation)
+        credit_info = credits_repository.get_current_credit(request.employee)
+        final_job_id = request.job_id if request.job_id else f"job_{uuid.uuid4()}"
+
+        # 3. Construction de la réponse HTTP (Format Node.js)
+        return {
+            "status": "success",
+            "response": chat_result["response"],
+            "sources": chat_result["sources"],
+            # Champs injectés par contextMiddleware
+            "currentUsage": credit_info["currentUsage"],
+            "totalCredit": credit_info["totalCredit"],
+            "job_id": final_job_id
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Erreur POST /ingest/chat: {e}")
+        # On renvoie une structure valide pour afficher l'erreur dans le chat front
+        return {
+            "status": "error",
+            "response": f"Error: {str(e)}",
+            "sources": []
+        }
+
+# ------------------------------------------
+# FICHIER : api\routes\search.py
+# ------------------------------------------
+from fastapi import APIRouter, HTTPException
+from repositories.chunk import chunk_repository
+from schemas.api import SearchRequest
+
+router = APIRouter()
+
+@router.post("/", summary="Recherche vectorielle brute (Debug)")
+async def search_vector(request: SearchRequest):
+    try:
+        # On appelle le repository directement
+        results = chunk_repository.search(
+            query=request.query,
+            employee=request.employee,
+            limit=request.limit
+        )
+        
+        # On reformate pour la lisibilité
+        clean_results = []
+        if results['ids']:
+            for i, id_val in enumerate(results['ids'][0]):
+                clean_results.append({
+                    "id": id_val,
+                    "score_distance": results['distances'][0][i] if 'distances' in results else "N/A",
+                    "content": results['documents'][0][i], # <--- C'est ça qu'on veut vérifier !
+                    "metadata": results['metadatas'][0][i]
+                })
+        
+        return {"count": len(clean_results), "results": clean_results}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,0 +1,395 @@
+# ==========================================
+# GROUPE : services_chunking
+# ==========================================
+
+
+# ------------------------------------------
+# FICHIER : services\chunking\__init__.py
+# ------------------------------------------
+
+
+# ------------------------------------------
+# FICHIER : services\chunking\enrichment.py
+# ------------------------------------------
+import logging
+from repositories.prompt import prompt_repository
+from services.llm import llm_service
+from utils.json_parser import robust_json_parse
+
+logger = logging.getLogger(__name__)
+
+class EnrichmentService:
+    
+    def extract_metadata(self, text: str, prompt_name: str) -> dict:
+        """
+        Pour les prompts génériques (Profil, Post, Synthèse...) qui agissent comme une instruction Système.
+        """
+        prompt_doc = prompt_repository.get_by_name(prompt_name)
+        if not prompt_doc:
+            logger.warning(f"⚠️ Prompt '{prompt_name}' introuvable.")
+            return {}
+
+        if not text or len(text) < 10:
+            return {}
+
+        logger.info(f"🧠 [Enrichment] JSON Prompt '{prompt_name}'...")
+        
+        # Cas standard : Le prompt en base est le System Prompt
+        raw_response = llm_service.generate_response(
+            system_prompt=prompt_doc.prompt,
+            user_input=f"Analyse ce texte :\n\n{text}",
+        )
+
+        return robust_json_parse(raw_response) or {}
+
+    def generate_hypothetical_questions(self, text: str) -> str:
+        """ Reverse HyDE (Questions) """
+        prompt_name = "chunk_hypothetical_questions"
+        prompt_doc = prompt_repository.get_by_name(prompt_name)
+        
+        if not prompt_doc:
+            return ""
+
+        formatted_prompt = prompt_doc.prompt.replace("${text}", text) # Syntaxe JS du prompt
+
+        response = llm_service.generate_response(
+            system_prompt="Tu es un expert en génération de questions.",
+            user_input=formatted_prompt
+        )
+        return response.strip()
+
+    def extract_entities(self, text: str) -> dict:
+        """
+        Spécifique pour 'chunk_entities' qui extrait People, Companies, Tools...
+        """
+        prompt_name = "chunk_entities"
+        prompt_doc = prompt_repository.get_by_name(prompt_name)
+        
+        if not prompt_doc:
+            logger.warning(f"⚠️ Prompt '{prompt_name}' introuvable.")
+            return {}
+
+        if len(text) < 50:
+            return {}
+
+        logger.info(f"🧠 [Enrichment] Extracting Entities (~{len(text)} chars)...")
+
+        # Le prompt contient "{text}", on le remplace
+        # Note : On utilise .replace() simple pour être sûr
+        formatted_prompt = prompt_doc.prompt.replace("{text}", text)
+
+        raw_response = llm_service.generate_response(
+            system_prompt="Tu es un expert en extraction d'entités nommées (NER).",
+            user_input=formatted_prompt
+        )
+        
+        return robust_json_parse(raw_response) or {}
+
+enrichment_service = EnrichmentService()
+
+# ------------------------------------------
+# FICHIER : services\chunking\factory.py
+# ------------------------------------------
+from typing import Dict, Any, List
+from schemas.doc import Chunk as ChunkSchema
+
+class ChunkFactory:
+    """
+    Centralise la création des objets Chunk pour garantir un format de métadonnées cohérent.
+    """
+
+    @staticmethod
+    def create_chunk(content: str, doc_id: str, type_chunk: str, extra_meta: Dict[str, Any] = {}) -> ChunkSchema:
+        """Helper générique"""
+        # On fusionne les métadonnées de base avec les spécifiques
+        metadata = {
+            "doc": doc_id,
+            "type": type_chunk,
+            **extra_meta
+        }
+        
+        # Nettoyage des valeurs None pour Chroma
+        clean_meta = {k: v for k, v in metadata.items() if v is not None}
+
+        return ChunkSchema(
+            content=content,
+            metadata=clean_meta
+        )
+
+    @staticmethod
+    def create_experience_chunk(doc_id: str, exp: Dict[str, Any]) -> ChunkSchema:
+        """Crée un chunk spécifique pour une expérience professionnelle"""
+        title = exp.get("title", "Poste inconnu")
+        company = exp.get("company", "Entreprise inconnue")
+        description = exp.get("description", "")
+        dates = exp.get("date_range", "")
+
+        content = f"Poste : {title}\nEntreprise : {company}\nPériode : {dates}\nDescription : {description}"
+        
+        # Texte optimisé pour la recherche vectorielle (Embedding)
+        # Ici on garde le même contenu, mais on pourrait le résumer
+        
+        return ChunkFactory.create_chunk(
+            content=content,
+            doc_id=doc_id,
+            type_chunk="experience",
+            extra_meta={
+                "company": company,
+                "title": title,
+                "source_type": "profile_structure"
+            }
+        )
+
+    @staticmethod
+    def create_education_chunk(doc_id: str, edu: Dict[str, Any]) -> ChunkSchema:
+        school = edu.get("school", "École inconnue")
+        degree = edu.get("degree", "")
+        
+        content = f"École : {school}\nDiplôme : {degree}"
+        
+        return ChunkFactory.create_chunk(
+            content=content,
+            doc_id=doc_id,
+            type_chunk="education",
+            extra_meta={
+                "school": school,
+                "degree": degree,
+                "source_type": "profile_structure"
+            }
+        )
+
+chunk_factory = ChunkFactory()
+
+# ------------------------------------------
+# FICHIER : services\chunking\manager.py
+# ------------------------------------------
+import logging
+from typing import List, Any
+from schemas.doc import Chunk as ChunkSchema
+from .strategies.general import GeneralStrategy
+from .strategies.profile import ProfileStrategy
+from .strategies.post import PostStrategy
+
+logger = logging.getLogger(__name__)
+
+class ChunkingManager:
+    def __init__(self):
+        self.strategies = {
+            "document": GeneralStrategy(),
+            "article": GeneralStrategy(),
+            "website": GeneralStrategy(),
+            "profile": ProfileStrategy(),
+            "post": PostStrategy(),
+        }
+        self.default_strategy = GeneralStrategy()
+
+    def chunk_data(self, doc_id: str, data: Any, category: str, tags: List[str]) -> List[ChunkSchema]:
+        strategy = self.strategies.get(category, self.default_strategy)
+        logger.info(f"🔪 [Chunking] Using strategy '{strategy.__class__.__name__}' for category '{category}'")
+        return strategy.execute(doc_id, data, tags)
+
+chunking_manager = ChunkingManager()
+
+# ------------------------------------------
+# FICHIER : services\chunking\strategies\base.py
+# ------------------------------------------
+from abc import ABC, abstractmethod
+from typing import List, Any
+from schemas.doc import Chunk as ChunkSchema # <-- Import essentiel ici
+
+class ChunkingStrategy(ABC):
+    @abstractmethod
+    def execute(self, doc_id: str, data: Any, tags: List[str]) -> List[ChunkSchema]:
+        pass
+
+# ------------------------------------------
+# FICHIER : services\chunking\strategies\general.py
+# ------------------------------------------
+from typing import List, Any
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from schemas.doc import Chunk as ChunkSchema
+from ..factory import chunk_factory
+from .base import ChunkingStrategy
+from services.chunking.enrichment import enrichment_service 
+
+class GeneralStrategy(ChunkingStrategy):
+    def __init__(self):
+        self.splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200
+        )
+
+    def execute(self, doc_id: str, data: Any, tags: List[str]) -> List[ChunkSchema]:
+        text_content = ""
+        if isinstance(data, str):
+            text_content = data
+        elif isinstance(data, dict):
+            text_content = data.get("text_content") or data.get("body") or data.get("content") or str(data)
+        
+        if not text_content:
+            return []
+
+        # 1. Découpage
+        raw_chunks = self.splitter.create_documents([text_content])
+        
+        final_chunks = []
+        for i, rc in enumerate(raw_chunks):
+            content_for_chunk = rc.page_content
+            
+            # 2. ENRICHISSEMENT 1 : Questions Hypothétiques
+            if len(rc.page_content) > 500:
+              questions = enrichment_service.generate_hypothetical_questions(rc.page_content)
+            if questions:
+                content_for_chunk += f"\n\n--- Questions Potentielles ---\n{questions}"
+
+            # 3. ENRICHISSEMENT 2 : Entités Nommées (chunk_entities)
+            entities = enrichment_service.extract_entities(rc.page_content)
+            
+            # Préparation des métadonnées aplaties pour Chroma
+            extra_meta = {
+                "index": i,
+                "tags": ",".join(tags), # Toujours aplatir les listes
+                "has_questions": bool(questions)
+            }
+
+            # On injecte les entités si trouvées
+            # Le prompt renvoie : { "people": [{"name": "..."}], "companies": ... }
+            if entities:
+                if "people" in entities and entities["people"]:
+                    names = [p["name"] for p in entities["people"] if "name" in p]
+                    extra_meta["entities_people"] = ", ".join(names)
+                
+                if "companies" in entities and entities["companies"]:
+                    names = [c["name"] for c in entities["companies"] if "name" in c]
+                    extra_meta["entities_companies"] = ", ".join(names)
+                
+                if "tools" in entities and entities["tools"]:
+                    names = [t["name"] for t in entities["tools"] if "name" in t]
+                    extra_meta["entities_tools"] = ", ".join(names)
+
+                if "locations" in entities and entities["locations"]:
+                    names = [l["name"] for l in entities["locations"] if "name" in l]
+                    extra_meta["entities_locations"] = ", ".join(names)
+
+            chunk = chunk_factory.create_chunk(
+                content=content_for_chunk,
+                doc_id=doc_id,
+                type_chunk="general",
+                extra_meta=extra_meta
+            )
+            final_chunks.append(chunk)
+            
+        return final_chunks
+
+# ------------------------------------------
+# FICHIER : services\chunking\strategies\post.py
+# ------------------------------------------
+from typing import List, Any
+from schemas.doc import Chunk as ChunkSchema
+from ..factory import chunk_factory
+from .base import ChunkingStrategy
+from services.chunking.enrichment import enrichment_service
+
+class PostStrategy(ChunkingStrategy):
+    def execute(self, doc_id: str, data: Any, tags: List[str]) -> List[ChunkSchema]:
+        """
+        Traite un Post LinkedIn/Social.
+        Utilise le prompt 'chunk_post' pour extraire les métadonnées avant de chunker.
+        """
+        # 1. Récupération du texte brut
+        text_content = ""
+        if isinstance(data, str):
+            text_content = data
+        elif isinstance(data, dict):
+            text_content = data.get("post_text") or data.get("text") or str(data)
+
+        if not text_content:
+            return []
+
+        # 2. Enrichissement via LLM (Prompt: chunk_post)
+        # Ce prompt extrait : name, company, industry, dates, likes_count, type...
+        meta_extracted = enrichment_service.extract_metadata(text_content, "chunk_post")
+        
+        # 3. Création du Chunk unique (un post est rarement assez long pour être découpé)
+        # On injecte les métadonnées extraites pour le filtrage futur
+        
+        chunk = chunk_factory.create_chunk(
+            content=text_content,
+            doc_id=doc_id,
+            type_chunk="post",
+            extra_meta={
+                "tags": ",".join(tags),
+                **meta_extracted  # Fusionne les infos extraites (ex: author, date...)
+            }
+        )
+
+        return [chunk]
+
+# ------------------------------------------
+# FICHIER : services\chunking\strategies\profile.py
+# ------------------------------------------
+from typing import List, Any
+from schemas.doc import Chunk as ChunkSchema
+from ..factory import chunk_factory
+from .base import ChunkingStrategy
+from .general import GeneralStrategy
+
+# IMPORT NOUVEAU
+from services.chunking.enrichment import enrichment_service 
+
+class ProfileStrategy(ChunkingStrategy):
+    def __init__(self):
+        self.text_strategy = GeneralStrategy()
+
+    def execute(self, doc_id: str, data: Any, tags: List[str]) -> List[ChunkSchema]:
+        if not isinstance(data, dict):
+            return self.text_strategy.execute(doc_id, data, tags)
+
+        chunks = []
+        person_name = data.get("name", "Inconnu")
+
+        # 1. Chunk "About" + ENRICHISSEMENT
+        if data.get("about"):
+            about_text = f"À propos de {person_name} : {data['about']}"
+            
+            # --- NOUVEAU : Appel LLM pour extraire les skills ---
+            # On utilise le prompt 'chunk_about' que vous avez migré en base
+            enriched_meta = enrichment_service.extract_metadata(data['about'], "chunk_about")
+            # ----------------------------------------------------
+
+            about_chunks = self.text_strategy.execute(doc_id, about_text, tags)
+            
+            for c in about_chunks:
+                c.metadata["type"] = "profile_about"
+                c.metadata["person_name"] = person_name
+                
+                # Injection des métadonnées LLM (Skills, etc.)
+                if enriched_meta:
+                    # On convertit les listes en strings pour Chroma
+                    if "hard_skills" in enriched_meta:
+                        c.metadata["hard_skills"] = ", ".join(enriched_meta["hard_skills"])
+                    if "soft_skills" in enriched_meta:
+                        c.metadata["soft_skills"] = ", ".join(enriched_meta["soft_skills"])
+                    if "languages" in enriched_meta:
+                        c.metadata["languages"] = ", ".join(enriched_meta["languages"])
+
+            chunks.extend(about_chunks)
+
+        # 2. Chunks "Experience"
+        experiences = data.get("experience", [])
+        if isinstance(experiences, list):
+            for exp in experiences:
+                chunk = chunk_factory.create_experience_chunk(doc_id, exp, person_name)
+                chunk.metadata["tags"] = ",".join(tags)
+                chunks.append(chunk)
+
+        # 3. Chunks "Education"
+        education = data.get("education", [])
+        if isinstance(education, list):
+            for edu in education:
+                chunk = chunk_factory.create_education_chunk(doc_id, edu, person_name)
+                chunk.metadata["tags"] = ",".join(tags)
+                chunks.append(chunk)
+
+        return chunks

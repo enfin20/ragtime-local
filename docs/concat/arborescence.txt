@@ -1,0 +1,100 @@
+PROJET PYTHON LOCAL
+Généré le : 2025-12-15 14:11:50.179886
+
+racine
+├── api
+│   ├── routes
+│   │   ├── auth.py
+│   │   ├── chat.py
+│   │   ├── ingest.py
+│   │   └── search.py
+│   └── main.py
+├── chroma_db_data
+│   ├── 5c03a142-64a5-45c1-a50b-df8ec4f5e729
+│   │   ├── data_level0.bin
+│   │   ├── header.bin
+│   │   ├── length.bin
+│   │   └── link_lists.bin
+│   └── chroma.sqlite3
+├── database
+│   ├── models
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── doc.py
+│   │   ├── doc_category.py
+│   │   ├── log.py
+│   │   ├── prompt.py
+│   │   └── user.py
+│   ├── __init__.py
+│   └── connection.py
+├── local_chroma_db
+│   ├── 14a06647-dff2-4238-abd8-b7d54cd6200b
+│   │   ├── data_level0.bin
+│   │   ├── header.bin
+│   │   ├── length.bin
+│   │   └── link_lists.bin
+│   ├── 848179aa-626f-4f4b-a207-510a203a4bd4
+│   │   ├── data_level0.bin
+│   │   ├── header.bin
+│   │   ├── length.bin
+│   │   └── link_lists.bin
+│   └── chroma.sqlite3
+├── repositories
+│   ├── __init__.py
+│   ├── base.py
+│   ├── chunk.py
+│   ├── credits.py
+│   ├── doc.py
+│   ├── log.py
+│   ├── prompt.py
+│   ├── tavily.py
+│   └── user.py
+├── schemas
+│   ├── __init__.py
+│   ├── api.py
+│   ├── chat.py
+│   ├── doc.py
+│   ├── log.py
+│   ├── prompt.py
+│   └── user.py
+├── scripts
+│   ├── __init__.py
+│   ├── clean_data.py
+│   ├── concat_code.py
+│   ├── debug_search.py
+│   ├── export_data.py
+│   ├── seed_prompts.py
+│   ├── test_01_check_state.py
+│   ├── test_02_full_flow.py
+│   ├── test_master.py
+│   ├── validate_chunking_profile.py
+│   ├── validate_enrichment.py
+│   ├── validate_ingest_file.py
+│   ├── validate_ingest_url.py
+│   ├── validate_step1.py
+│   ├── validate_step2.py
+│   ├── validate_step3.py
+│   ├── verify_chunking_parity.py
+│   ├── verify_entities.py
+│   └── verify_hypothetical.py
+├── services
+│   ├── chunking
+│   │   ├── strategies
+│   │   │   ├── base.py
+│   │   │   ├── general.py
+│   │   │   ├── post.py
+│   │   │   └── profile.py
+│   │   ├── __init__.py
+│   │   ├── enrichment.py
+│   │   ├── factory.py
+│   │   └── manager.py
+│   ├── __init__.py
+│   ├── chat.py
+│   ├── ingestion.py
+│   └── llm.py
+├── utils
+│   ├── json_parser.py
+│   ├── linkedin_cleaner.py
+│   └── text_extractor.py
+├── rag_test.py
+└── requirements.txt
