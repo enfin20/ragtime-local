@@ -1,133 +1,186 @@
 import logging
+from typing import List, Tuple
+
 from repositories.prompt import prompt_repository
 from services.llm import llm_service
 from schemas.chat import ChatRequestNode
-from services.agent_tools import AgentToolExecutor
+# Assurez-vous d'avoir bien ajouté SearchStrategy dans services/agent_tools.py comme vu précédemment
+from services.agent_tools import AgentToolExecutor, SearchStrategy 
 
 logger = logging.getLogger(__name__)
 
 class ChatService:
     
     def handle_node_chat(self, request: ChatRequestNode) -> dict:
+        """
+        Point d'entrée principal du Chat.
+        Dispatche vers le workflow Expert (avec Prompt) ou Standard.
+        """
         logger.info(f"🚀 [CHAT] Demande reçue: Prompt='{request.prompt}' | Q='{request.question}'")
 
-        # 1. Initialisation des outils
         tools = AgentToolExecutor(request.employee)
         
-        # 2. Gestion Exclusion (Standard)
+        # Gestion des exclusions (Toujours exclure les archives par défaut)
         exclude = request.exclude if isinstance(request.exclude, dict) else {}
         if "archive" not in exclude.get("categories", []):
             exclude.setdefault("categories", []).append("archive")
 
-        # ==========================================================
-        # BRANCHE 1 : WORKFLOW EXPERT (Prompt défini)
-        # Logique: Search -> Rerank -> Inject -> Execute Prompt
-        # ==========================================================
+        # Sélection du workflow
         if request.prompt:
             return self._handle_expert_workflow(request, tools, exclude)
-
-        # ==========================================================
-        # BRANCHE 2 : WORKFLOW STANDARD (Chat Agentique)
-        # ==========================================================
+        
         return self._handle_standard_workflow(request, tools, exclude)
 
-    def _handle_expert_workflow(self, request: ChatRequestNode, tools: AgentToolExecutor, exclude: dict) -> dict:
-        logger.info("🧠 [Workflow] Démarrage mode EXPERT (Data-First)")
+    def _build_dynamic_context(self, ranked_chunks: List[dict], sort_by: str = "index", max_chunks: int = 0) -> Tuple[str, List[dict]]:
+        """
+        Construit la chaîne de contexte (String) à partir des chunks bruts.
+        
+        Args:
+            ranked_chunks: Liste des chunks (déjà triés par score/pertinence par smart_retrieve).
+            sort_by: 'index' (pour lecture narrative) ou 'score' (pour pertinence pure).
+            max_chunks: Limite optionnelle en nombre de chunks (ex: 5 pour du fact-checking).
+        """
+        selected_chunks = []
+        current_chars = 0
+        
+        # 1. Récupération de la limite technique du modèle chargé
+        max_chars_limit = llm_service.get_context_limit()
+        
+        # 2. Application de la limite numérique (si demandée)
+        candidates = ranked_chunks
+        if max_chunks > 0:
+            candidates = ranked_chunks[:max_chunks]
+        
+        # 3. Remplissage intelligent (Context Stuffing)
+        # On prend les chunks dans l'ordre de pertinence (candidates est trié par score)
+        # tant qu'il y a de la place en mémoire.
+        for chunk in candidates:
+            content_len = len(chunk['content'])
+            
+            # Vérification de l'espace disponible (avec marge de sécurité)
+            if current_chars + content_len < max_chars_limit:
+                selected_chunks.append(chunk)
+                current_chars += content_len
+            else:
+                logger.info(f"🛑 Limite contexte atteinte ({current_chars}/{max_chars_limit} chars). Arrêt.")
+                break
+        
+        if not selected_chunks:
+            return "", []
 
-        # A. Récupération du Prompt Expert
+        # 4. Tri Final pour la consommation par le LLM
+        if sort_by == "index":
+            # Mode NARRATIF (Global) : On remet dans l'ordre du document (Page 1 -> Page 10)
+            # C'est crucial pour que le LLM comprenne la structure.
+            selected_chunks.sort(key=lambda x: x['metadata'].get('chunk_index', 0))
+        else:
+            # Mode PERTINENCE (Specific) : On garde les meilleurs scores en premier
+            # Utile pour que le LLM voit la réponse la plus probable tout de suite.
+            selected_chunks.sort(key=lambda x: x.get('score', 0), reverse=True)
+
+        logger.info(f"📚 Contexte final construit : {len(selected_chunks)} chunks (~{current_chars} chars) | Tri: {sort_by}")
+
+        # 5. Assemblage de la string
+        context_str = "\n\n".join([
+            f"--- Source: {c['metadata'].get('doc')} (Index: {c['metadata'].get('chunk_index', '?')}, Score: {c.get('score', 0):.2f}) ---\n{c['content']}" 
+            for c in selected_chunks
+        ])
+        
+        return context_str, selected_chunks
+
+    def _handle_expert_workflow(self, request: ChatRequestNode, tools: AgentToolExecutor, exclude: dict) -> dict:
+        logger.info("🧠 [Workflow] Démarrage mode EXPERT")
+
+        # A. Chargement du Prompt Système
         prompt_doc = prompt_repository.get_by_name(request.prompt)
         if not prompt_doc:
             return {"response": f"Erreur: Prompt '{request.prompt}' introuvable.", "sources": []}
 
-        # B. Définition de la cible (Target Input)
-        # Node: const targetInput = question ... ? question : "Analyse globale..."
-        target_input = request.question if request.question and request.question.strip() else "Analyse globale du contenu principal"
+        target_input = request.question if request.question and request.question.strip() else "Analyse globale"
         
-        # C. ÉTAPE 1 : Exploratory Search (Vectorielle pure)
-        raw_candidates = tools.exploratory_search(target_input, request.tags, exclude)
-        
-        # D. ÉTAPE 2 : Reranking Intelligent (LLM)
-        # C'est ici que la magie opère : le LLM décide si "Article IA" correspond à "Analyse globale"
-        relevant_chunks = tools.rerank_chunks(target_input, raw_candidates)
+        # B. Récupération Intelligente (Router -> Search -> Rerank)
+        retrieval_result = tools.smart_retrieve(target_input, request.tags, exclude)
+        chunks = retrieval_result["chunks"]
+        strategy = retrieval_result["strategy"]
 
-        # E. Construction du Contexte pour le Prompt
+        # C. Construction du Contexte Adaptative
         context_str = ""
-        sources_list = []
-        
-        if relevant_chunks:
-            context_str = "\n\n".join([
-                f"--- Document {i+1} (Source: {c['metadata'].get('doc')}) ---\n{c['content']}" 
-                for i, c in enumerate(relevant_chunks)
-            ])
-            # Formatage des sources pour la réponse API
-            seen_docs = set()
-            for c in relevant_chunks:
-                doc_name = c['metadata'].get('doc', 'inconnu')
-                if doc_name not in seen_docs:
-                    sources_list.append({"name": doc_name, "score": c.get("score", 1.0)})
-                    seen_docs.add(doc_name)
-        else:
-            logger.warning("⚠️ [Expert] Aucun chunk pertinent après Reranking.")
+        final_selection = []
 
-        # F. Construction du Message Final (Prompt Engineering)
-        # Structure Node.js :
-        # 1. System Prompt (Le prompt expert chargé)
-        # 2. User Message : "Voici les données... CONTEXTE... INSTRUCTION..."
-        
+        if strategy == SearchStrategy.GLOBAL:
+            # Stratégie Résumé : On prend le max de chunks, triés par Index (lecture livre)
+            context_str, final_selection = self._build_dynamic_context(chunks, sort_by="index")
+        else:
+            # Stratégie Précision : On prend max 5 chunks, triés par Score
+            context_str, final_selection = self._build_dynamic_context(chunks, sort_by="score", max_chunks=5)
+
+        # D. Assemblage du Prompt Final
         system_msg = prompt_doc.prompt
-        
         user_msg_content = f"""
-        Voici les données contextuelles récupérées concernant "{target_input}".
+        Voici les données contextuelles récupérées (Mode: {strategy.value}) :
         
         CONTEXTE:
         {context_str}
         
         INSTRUCTION:
-        Exécute maintenant ta mission d'expert en utilisant ces données.
+        En utilisant ces données, exécute la tâche demandée.
         """
         
-        if not relevant_chunks:
-            user_msg_content = f"Aucune donnée spécifique trouvée pour '{target_input}'. Fais de ton mieux."
+        if not final_selection:
+            user_msg_content = f"Aucune donnée pertinente trouvée pour '{target_input}'. Fais de ton mieux avec tes connaissances générales."
 
-        # G. Appel final LLM
-        # On concatène l'historique si présent
+        # Historique (si présent)
         history_block = ""
         if request.history:
-            history_block = "HISTORIQUE DE CONVERSATION:\n" + "\n".join(
+            history_block = "HISTORIQUE:\n" + "\n".join(
                 [f"{m.get('role','').upper()}: {m.get('content','')}" for m in request.history]
             ) + "\n\n"
 
-        # Note: On triche un peu en mettant tout dans le user_input pour simplifier l'appel à llm_service
-        # mais on respecte la structure logique.
-        full_prompt = f"{system_msg}\n\n{history_block}\nUSER TASK:\n{user_msg_content}"
+        full_prompt = f"{system_msg}\n\n{history_block}USER TASK:\n{user_msg_content}"
+        
+        # E. Génération
+        try:
+            response = llm_service.generate_response(
+                system_prompt="Tu es un expert qualifié.",
+                user_input=full_prompt
+            )
+        except Exception as e:
+            logger.error(f"❌ Erreur génération : {e}")
+            return {"response": "Désolé, une erreur technique est survenue lors de la génération.", "sources": []}
 
-        response = llm_service.generate_response(
-            system_prompt="Tu es un expert qualifié.",
-            user_input=full_prompt
-        )
+        # Formatage des sources pour le frontend
+        unique_sources = {c['metadata'].get('doc'): c for c in final_selection}.values()
+        sources_list = [{"name": c['metadata'].get('doc'), "score": c.get("score")} for c in unique_sources]
 
-        return {
-            "response": response,
-            "sources": sources_list
-        }
+        return {"response": response, "sources": sources_list}
 
     def _handle_standard_workflow(self, request: ChatRequestNode, tools: AgentToolExecutor, exclude: dict) -> dict:
-        # Implémentation simplifiée du chat standard utilisant aussi le reranking
+        """
+        Workflow Chat standard (sans prompt expert prédéfini).
+        """
         query = request.question if request.question.strip() else "Résumé"
         
-        raw = tools.exploratory_search(query, request.tags, exclude)
-        refined = tools.rerank_chunks(query, raw)
+        # A. Récupération Intelligente
+        retrieval_result = tools.smart_retrieve(query, request.tags, exclude)
+        chunks = retrieval_result["chunks"]
+        strategy = retrieval_result["strategy"]
         
-        context_str = "\n".join([c['content'] for c in refined])
+        # B. Contexte Adaptatif
+        if strategy == SearchStrategy.GLOBAL:
+            context_str, final_selection = self._build_dynamic_context(chunks, sort_by="index")
+        else:
+            context_str, final_selection = self._build_dynamic_context(chunks, sort_by="score", max_chunks=5)
         
+        # C. Génération
         answer = llm_service.generate_response(
-            system_prompt="Tu es un assistant utile. Réponds en français.",
+            system_prompt="Tu es un assistant utile et précis. Réponds en français en te basant sur le contexte fourni.",
             user_input=query,
             context=context_str
         )
         
-        sources = [{"name": c['metadata'].get('doc'), "score": c.get("score")} for c in refined]
+        unique_sources = {c['metadata'].get('doc'): c for c in final_selection}.values()
+        sources_list = [{"name": c['metadata'].get('doc'), "score": c.get("score")} for c in unique_sources]
         
-        return {"response": answer, "sources": sources}
+        return {"response": answer, "sources": sources_list}
 
 chat_service = ChatService()

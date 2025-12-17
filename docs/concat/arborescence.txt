@@ -1,5 +1,5 @@
 PROJET PYTHON LOCAL
-Généré le : 2025-12-15 17:14:42.044492
+Généré le : 2025-12-16 08:43:14.847430
 
 racine
 ├── api
@@ -29,6 +29,11 @@ racine
 │   └── connection.py
 ├── local_chroma_db
 │   ├── 14a06647-dff2-4238-abd8-b7d54cd6200b
+│   │   ├── data_level0.bin
+│   │   ├── header.bin
+│   │   ├── length.bin
+│   │   └── link_lists.bin
+│   ├── 3d9e2c7c-1973-4db3-81ba-f50bb31134ed
 │   │   ├── data_level0.bin
 │   │   ├── header.bin
 │   │   ├── length.bin
@@ -63,6 +68,7 @@ racine
 │   ├── concat_code.py
 │   ├── debug_search.py
 │   ├── export_data.py
+│   ├── init_login.py
 │   ├── seed_prompts.py
 │   ├── test_01_check_state.py
 │   ├── test_02_full_flow.py
@@ -91,6 +97,7 @@ racine
 │   ├── __init__.py
 │   ├── agent_tools.py
 │   ├── chat.py
+│   ├── files.py
 │   ├── ingestion.py
 │   └── llm.py
 ├── utils

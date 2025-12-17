@@ -101,51 +101,50 @@ def clean_linkedin_url(url: str) -> str:
 # ------------------------------------------
 # FICHIER : utils\text_extractor.py
 # ------------------------------------------
-import os
+import io
 import logging
-from pydantic import FilePath
-from pypdf import PdfReader
+import pypdf # Nécessite pip install pypdf
 
 logger = logging.getLogger(__name__)
 
 class TextExtractor:
-    @staticmethod
-    def extract_from_file(file_path: str) -> str:
-        """
-        Détecte l'extension et extrait le texte.
-        Supporte: .txt, .pdf, .md
-        """
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Le fichier n'existe pas : {file_path}")
-
-        _, ext = os.path.splitext(file_path)
-        ext = ext.lower()
-
+    
+    def extract_from_file(self, file_path: str, content_type: str = "text/plain") -> str:
         try:
-            if ext == ".pdf":
-                return TextExtractor._read_pdf(file_path)
-            elif ext in [".txt", ".md", ".json", ".csv"]:
-                return TextExtractor._read_text(file_path)
+            if content_type == "application/pdf" or file_path.endswith(".pdf"):
+                return self._extract_pdf(file_path)
             else:
-                logger.warning(f"⚠️ Extension non supportée pour l'extraction texte : {ext}")
-                return ""
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return f.read()
         except Exception as e:
-            logger.error(f"❌ Erreur lecture fichier {file_path}: {e}")
+            logger.error(f"❌ Erreur extraction texte : {e}")
+            return ""
+
+    def _extract_pdf(self, file_path: str) -> str:
+        text = ""
+        try:
+            with open(file_path, 'rb') as f:
+                reader = pypdf.PdfReader(f)
+                for page in reader.pages:
+                    text += page.extract_text() + "\n\n"
+            return text
+        except Exception as e:
+            logger.error(f"❌ Erreur lecture PDF : {e}")
             raise e
 
-    @staticmethod
-    def _read_text(path: str) -> str:
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
-
-    @staticmethod
-    def _read_pdf(path: str) -> str:
-        text = ""
-        reader = PdfReader(path)
-        for page in reader.pages:
-            content = page.extract_text()
-            if content:
-                text += content + "\n"
-        return text
+    def extract_from_bytes(self, file_bytes: bytes, filename: str) -> str:
+        """Pour traitement direct depuis la RAM (UploadFile)"""
+        try:
+            if filename.lower().endswith(".pdf"):
+                reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+                text = ""
+                for page in reader.pages:
+                    text += page.extract_text() + "\n\n"
+                return text
+            else:
+                return file_bytes.decode('utf-8')
+        except Exception as e:
+            logger.error(f"❌ Erreur extraction bytes : {e}")
+            raise e
 
 text_extractor = TextExtractor()

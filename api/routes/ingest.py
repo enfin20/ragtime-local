@@ -2,8 +2,9 @@ import shutil
 import os
 import uuid
 import logging
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
+from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, Query
 from typing import Optional
+from services.files import files_service
 
 from utils.linkedin_cleaner import clean_linkedin_url
 from services.ingestion import ingestion_service
@@ -61,16 +62,6 @@ async def ingest_text(request: IngestTextRequest):
 async def ingest_url(request: IngestUrlRequest):
     return ingestion_service.process_input(input_data=request.url, employee=request.employee, tags=request.tags, origin="api_url")
 
-@router.post("/file", response_model=IngestResponse)
-async def ingest_file(file: UploadFile = File(...), employee: str = Form("api_user"), tags: str = Form("")):
-    temp_file_path = f"temp_{file.filename}"
-    try:
-        with open(temp_file_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
-        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-        return ingestion_service.process_input(input_data=temp_file_path, employee=employee, tags=tag_list, origin="api_file")
-    finally:
-        if os.path.exists(temp_file_path): os.remove(temp_file_path)
-
 @router.get("/version")
 async def get_version(): return {"version": "locale"}
 
@@ -79,10 +70,6 @@ async def get_tags_docs_legacy(tag: str, employee: str = Query(...), job_id: Opt
     docs_list = doc_repository.get_docs_by_tag(employee, tag)
     credit_info = credits_repository.get_current_credit(employee)
     return {"status": "success", "docs": docs_list, "currentUsage": credit_info["currentUsage"], "totalCredit": credit_info["totalCredit"], "job_id": job_id or f"job_{uuid.uuid4()}"}
-
-# =====================================================================
-# ROUTE /userchat CORRIGÉE
-# =====================================================================
 
 @router.post("/chat")
 async def chat_legacy(request: ChatRequestNode):
@@ -117,3 +104,39 @@ async def user_chat_legacy(request: ChatRequestNode):
             "response": f"Error: {str(e)}",
             "sources": []
         }
+    
+@router.post("/file", response_model=IngestResponse)
+async def ingest_file(
+    background_tasks: BackgroundTasks,
+    docFile: UploadFile = File(...),  
+    employee: str = Form(...),
+    tags: str = Form(""),
+    job_id: Optional[str] = Form(None)
+):
+    """
+    Endpoint miroir de Node.js POST /file
+    """
+    logger.info(f"📥 [API] Réception fichier : {docFile.filename} | User: {employee}")
+
+    # Nettoyage des tags comme dans Node (split sur virgule ou dièse selon le besoin)
+    # Node fait: tags.split("#").filter(Boolean)
+    tag_list = [t.strip() for t in tags.replace("#", ",").split(",") if t.strip()]
+    
+    final_job_id = job_id or f"job_{uuid.uuid4()}"
+
+    # Appel du service qui gère la logique métier
+    result = await files_service.handle_add_file_workflow(
+        file=docFile,
+        tags=tag_list,
+        employee=employee,
+        job_id=final_job_id,
+        background_tasks=background_tasks
+    )
+
+    # Réponse immédiate au format Node.js
+    return {
+        "status": result["status"],
+        "doc_id": docFile.filename,
+        "chunks_count": 0, # Sera traité en background
+        "strategy": "async_upload"
+    }

@@ -16,7 +16,7 @@
     "company": "Local Corp",
     "lastname": "Dev",
     "firstname": "Junior",
-    "credit": 0.0,
+    "credit": 1000.0,
     "password": "admin1",
     "services": {
       "graph_rag": true

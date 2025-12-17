@@ -34,10 +34,36 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     print(f"⚠️ Détail erreur : {exc.errors()}\n")
     return JSONResponse(status_code=422, content={"detail": exc.errors(), "body": body.decode('utf-8')})
 
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # On évite de lire le body si c'est un upload de fichier ou s'il est déjà consommé
+    body_content = "N/A (Stream consumed or File Upload)"
+    
+    try:
+        # On tente de lire le body uniquement si le stream n'est pas consommé
+        # (Technique basique : on try/except)
+        body = await request.body()
+        body_content = body.decode('utf-8')
+    except Exception:
+        pass # Si on ne peut pas lire le body, on ignore
+
+    print(f"\n❌ ERREUR 422 - Validation Failed:")
+    print(f"📥 URL : {request.url}")
+    print(f"📦 Body : {body_content}")
+    print(f"⚠️ Détail erreur : {exc.errors()}\n")
+    
+    return JSONResponse(
+        status_code=422, 
+        content={"detail": exc.errors(), "body": str(body_content)}
+    )
+
+
 # Configuration CORS (Pour autoriser le frontend)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # À restreindre en prod
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

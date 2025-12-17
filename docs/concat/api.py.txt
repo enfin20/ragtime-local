@@ -42,10 +42,36 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     print(f"⚠️ Détail erreur : {exc.errors()}\n")
     return JSONResponse(status_code=422, content={"detail": exc.errors(), "body": body.decode('utf-8')})
 
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # On évite de lire le body si c'est un upload de fichier ou s'il est déjà consommé
+    body_content = "N/A (Stream consumed or File Upload)"
+    
+    try:
+        # On tente de lire le body uniquement si le stream n'est pas consommé
+        # (Technique basique : on try/except)
+        body = await request.body()
+        body_content = body.decode('utf-8')
+    except Exception:
+        pass # Si on ne peut pas lire le body, on ignore
+
+    print(f"\n❌ ERREUR 422 - Validation Failed:")
+    print(f"📥 URL : {request.url}")
+    print(f"📦 Body : {body_content}")
+    print(f"⚠️ Détail erreur : {exc.errors()}\n")
+    
+    return JSONResponse(
+        status_code=422, 
+        content={"detail": exc.errors(), "body": str(body_content)}
+    )
+
+
 # Configuration CORS (Pour autoriser le frontend)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # À restreindre en prod
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,6 +91,7 @@ if __name__ == "__main__":
     import uvicorn
     # Lancement serveur : host 0.0.0.0 pour être accessible sur le réseau local
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 # ------------------------------------------
 # FICHIER : api\routes\auth.py
@@ -164,8 +191,9 @@ import shutil
 import os
 import uuid
 import logging
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
+from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, Query
 from typing import Optional
+from services.files import files_service
 
 from utils.linkedin_cleaner import clean_linkedin_url
 from services.ingestion import ingestion_service
@@ -279,6 +307,47 @@ async def user_chat_legacy(request: ChatRequestNode):
             "response": f"Error: {str(e)}",
             "sources": []
         }
+    
+@router.post("/file", response_model=IngestResponse)
+async def ingest_file(
+    background_tasks: BackgroundTasks,
+    # ---------------------------------------------------------
+    # C'EST ICI LA CORRECTION : Le nom de variable DOIT être docFile
+    # pour matcher upload.single("docFile") du code Node.js
+    # ---------------------------------------------------------
+    docFile: UploadFile = File(...), 
+    
+    employee: str = Form(...),
+    tags: str = Form(""),
+    job_id: Optional[str] = Form(None)
+):
+    """
+    Endpoint miroir de Node.js POST /file
+    """
+    logger.info(f"📥 [API] Réception fichier : {docFile.filename} | User: {employee}")
+
+    # Nettoyage des tags comme dans Node (split sur virgule ou dièse selon le besoin)
+    # Node fait: tags.split("#").filter(Boolean)
+    tag_list = [t.strip() for t in tags.replace("#", ",").split(",") if t.strip()]
+    
+    final_job_id = job_id or f"job_{uuid.uuid4()}"
+
+    # Appel du service qui gère la logique métier
+    result = await files_service.handle_add_file_workflow(
+        file=docFile,
+        tags=tag_list,
+        employee=employee,
+        job_id=final_job_id,
+        background_tasks=background_tasks
+    )
+
+    # Réponse immédiate au format Node.js
+    return {
+        "status": result["status"],
+        "doc_id": docFile.filename,
+        "chunks_count": 0, # Sera traité en background
+        "strategy": "async_upload"
+    }
 
 # ------------------------------------------
 # FICHIER : api\routes\search.py
